@@ -41,5 +41,5 @@ start.bat
 Либо напрямую через Java:
 
 ```bash
-java -jar joom.jar
+java -jar joom-1.0-SNAPSHOT.jar
 ```
