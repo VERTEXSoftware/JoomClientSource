@@ -20,7 +20,7 @@ java -version
 
 
 
-1. Скачайте последний билд из раздела [Releases](https://github.com/VERTEXSoftware/JoomClient/archive/refs/heads/main.zip).
+1. Скачайте последний билд из раздела [Releases](https://github.com/VERTEXSoftware/JoomClientSource/archive/refs/heads/main.zip).
 2. Распакуйте архив в удобную папку.
 3. Соберите проект.
 4. Переместите файл **data.slop** из папки **res** к **jar** файлу.
