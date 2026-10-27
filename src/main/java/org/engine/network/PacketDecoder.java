@@ -34,7 +34,7 @@ public class PacketDecoder extends MessageToMessageDecoder<ByteBuf> {
                 out.add(new LoginResponsePacket(in.readInt(),in.readInt(), readString(in)));
                 break;
             case PacketType.MAP_INFO:
-                out.add(new MapInfoPacket(readString(in), readString(in)));
+                out.add(new MapInfoPacket(readString(in), readString(in),in.readLong()));
                 break;
             case PacketType.CLIENT_READY:
                 out.add(new ClientReadyPacket());
@@ -49,7 +49,7 @@ public class PacketDecoder extends MessageToMessageDecoder<ByteBuf> {
                 out.add(new PlayerStatsPacket(in.readInt(), readString(in), in.readInt(), in.readInt()));
                 break;
             case PacketType.LOGIN:
-                out.add(new LoginPacket(readString(in),in.readInt()));
+                out.add(new LoginPacket(readString(in),in.readInt(),in.readLong()));
                 break;
             case PacketType.PLAYER_RESPAWN:
                 out.add(new PlayerRespawnPacket(in.readInt(),in.readInt(), readString(in)));

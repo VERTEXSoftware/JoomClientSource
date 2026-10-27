@@ -34,6 +34,7 @@ public class PacketEncoder extends MessageToByteEncoder<Object> {
             out.writeShort(PacketType.MAP_INFO);
             writeString(out, p.mapName);
             writeString(out, p.urlDownload);
+            out.writeLong(p.hashcrc64);
         } else if (msg instanceof ClientReadyPacket) {
             out.writeShort(PacketType.CLIENT_READY);
         } else if (msg instanceof MatchStartPacket) {
@@ -54,6 +55,7 @@ public class PacketEncoder extends MessageToByteEncoder<Object> {
             out.writeShort(PacketType.LOGIN);
             writeString(out, p.name);
             out.writeInt( p.model);
+            out.writeLong( p.hash);
         } else if (msg instanceof LoginResponsePacket) {
             LoginResponsePacket p = (LoginResponsePacket) msg;
             out.writeShort(PacketType.LOGIN_RESPONSE);

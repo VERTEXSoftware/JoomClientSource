@@ -61,6 +61,10 @@ public class GameObject {
     }
 
 
+    private boolean occluder = false;
+
+    public boolean IsOccluder() { return occluder; }
+    public void SetOccluder(boolean occluder) { this.occluder = occluder; }
 
     public void SetCollisionMaskUpd() {
 

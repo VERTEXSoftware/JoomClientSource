@@ -49,7 +49,7 @@ public class Scene {
     }
 
     public void addListGameObject(List<GameObject> gameObjects) {
-
+        if(gameObjects==null){return;}
         // Добавляем в рендер
         objectsToAdd.addAll(gameObjects);
 
@@ -133,18 +133,7 @@ public class Scene {
         }
 
         // 2. Если кто-то "умер" во время обновления, безопасно удаляем его после цикла
-        if (!objectsToAdd.isEmpty()) {
-            for (GameObject go : objectsToAdd) {
-                gameObjects.add(go);
-                if (go.getRigidBody() != null) {
-                    physics.dynamicsWorld.addRigidBody(go.getRigidBody(),
-                            (short) go.getCollisionFilterGroup(),
-                            (short) go.getCollisionFilterMask());
 
-                }
-            }
-            objectsToAdd.clear();
-        }
 
         // Потом удаляем мёртвые
         if (!objectsToRemove.isEmpty()) {
@@ -156,6 +145,18 @@ public class Scene {
                 go.cleanup();
             }
             objectsToRemove.clear();
+        }
+        if (!objectsToAdd.isEmpty()) {
+            for (GameObject go : objectsToAdd) {
+                gameObjects.add(go);
+                if (go.getRigidBody() != null) {
+                    physics.dynamicsWorld.addRigidBody(go.getRigidBody(),
+                            (short) go.getCollisionFilterGroup(),
+                            (short) go.getCollisionFilterMask());
+
+                }
+            }
+            objectsToAdd.clear();
         }
     }
 

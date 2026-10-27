@@ -82,6 +82,10 @@ public class NetPlayer extends GameObject {
         modelpack.add("model/crow.dae");
         modelpack.add("model/mettaton.dae");
         modelpack.add("model/kerfus.dae");
+        modelpack.add("model/physicle.dae");
+        modelpack.add("model/clearbot.dae");
+        modelpack.add("model/creeper.dae");
+        modelpack.add("model/scp173.dae");
 
         Texture bloodTexture = new Texture("texture/blood.png");
         // Передаем false в createph, так как мы создадим кастомное кинематическое тело
@@ -157,7 +161,7 @@ public class NetPlayer extends GameObject {
                 false,
                 new Vector3f(0, 0, 0),
                 new Vector3f(0, 0, 0),
-                new Vector3f(3, 3, 3)
+                new Vector3f(3, 3, 3),true
         );
 
         Scene.getInstance().addListGameObject(animMesh);
@@ -421,7 +425,7 @@ public class NetPlayer extends GameObject {
 
 
         List<GameObject> objects = ModelLoader.load(
-                "model/skeleton.dae", sceneShader, 2.0f, true, playerPos, spawnRotation, new Vector3f(1, 1, 1)
+                "model/skeleton.dae", sceneShader, 2.0f, true, playerPos, spawnRotation, new Vector3f(1, 1, 1),true
         );
         for (GameObject obj : objects) {
             obj.setTimerDestoroy(20.0f);

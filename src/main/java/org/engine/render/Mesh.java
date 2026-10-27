@@ -31,6 +31,7 @@ public class Mesh {
     }
 
 
+
     public Mesh(float[] positions, float[] texCoords, int[] indices, boolean useAABB) {
         this.vertexCount = indices.length;
         this.vboIdList = new ArrayList<>();

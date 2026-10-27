@@ -9,6 +9,9 @@ import java.nio.ByteOrder;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -165,6 +168,19 @@ public final class ManagerPack {
         return crc;
     }
 
+    public static long crc64File(String path) throws IOException {
+        long crc = -1;
+        try (FileChannel channel = FileChannel.open(Paths.get(path), StandardOpenOption.READ)) {
+            ByteBuffer buf = ByteBuffer.allocateDirect(64 * 1024); // 64 КБ
+            while (channel.read(buf) != -1) {
+                buf.flip();
+                int len = buf.remaining();
+                crc = crc64(crc, buf, len);
+                buf.clear();
+            }
+        }
+        return ~crc;
+    }
     ///////////////////////////////////////////////////////////////////////////
     // NodeFile / NodeTable
     ///////////////////////////////////////////////////////////////////////////

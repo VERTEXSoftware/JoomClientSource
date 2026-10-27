@@ -17,7 +17,9 @@ import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWCharCallbackI;
 import org.lwjgl.glfw.GLFWKeyCallbackI;
 import org.lwjgl.glfw.GLFWMouseButtonCallbackI;
+import org.slvl.ManagerPack;
 
+import javax.vecmath.Quat4f;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +33,7 @@ public class Engine {
     }
 
     private List<GameObject> menuCharacterMesh;
+    private List<GameObject> menuScene;
     private int currentMenuModelIndex = -1;
 
     private Window window;
@@ -64,10 +67,19 @@ public class Engine {
     private SoundBuffer Musicmenu;
     private SoundSource pointbackmusic;
 
+    // === SWAY === поля для покачивания камеры в меню
+    private float camShakeTime = 0f;
+    private final Vector3f camBasePos = new Vector3f(0, 10, 5); // базовая позиция меню
+    private static final float CAM_SWAY_AMP_X = 0.35f;   // амплитуда по X
+    private static final float CAM_SWAY_AMP_Y = 0.18f;   // амплитуда по Y (вертикальное дыхание)
+    private static final float CAM_SWAY_AMP_Z = 0.25f;   // амплитуда по Z
+    private static final float CAM_SWAY_SPEED = 1.2f;    // скорость (рад/сек)
+    // === SWAY ===
+
     private final GLFWMouseButtonCallbackI mouseButtonCallback = (handle, button, action, mods) -> {
         if (gameState != GameState.MENU && gameState != GameState.CONNECTING) return;
         if (action != GLFW_PRESS) return;
-        if (mainMenu.isSplashActive()) return;   // НОВОЕ: игнорируем клики во время баннера
+        if (mainMenu.isSplashActive()) return;   // игнорируем клики во время баннера
 
         double[] mx = new double[1];
         double[] my = new double[1];
@@ -84,17 +96,41 @@ public class Engine {
             }
             return;
         }
-        if (mainMenu.isSplashActive()) return;   // НОВОЕ: игнорируем ввод во время баннера
+        if (mainMenu.isSplashActive()) return;   // игнорируем ввод во время баннера
         if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-            mainMenu.onKeyPressed(key, mods);
+            // Передаём action, чтобы MainMenu мог отличить PRESS от REPEAT
+            // (например, для Ctrl+V вставлять только один раз)
+            mainMenu.onKeyPressed(key, mods, action);
         }
     };
 
     private final GLFWCharCallbackI charCallback = (handle, codepoint) -> {
-        if (gameState == GameState.MENU && !mainMenu.isSplashActive()) {   // НОВОЕ
+        if (gameState == GameState.MENU && !mainMenu.isSplashActive()) {
             mainMenu.onCharTyped((char) codepoint);
         }
     };
+
+    void LoadMenuLevel(){
+        Scene.getInstance().update(0);
+        cameraRestartPos();
+        if(menuScene!=null){
+            Scene.getInstance().removeListGameObject(menuScene);
+            menuScene.clear();
+            menuScene=null;
+        }
+        Scene.getInstance().update(0);
+
+        Shader nepl = ResourceCache.getShader("shader/vertex.glsl", "shader/fragment.glsl");
+        // Ставим модель по центру координат (0,0,0)
+        menuScene = ModelLoader.load(
+                "model/menu.dae", nepl, 0.0f, false,
+                new Vector3f(0, 5, 0),
+                new Vector3f(0, 0, 0),
+                new Vector3f(10, 10, 10),false
+        );
+        Scene.getInstance().addListGameObject(menuScene);
+        Scene.getInstance().update(0);
+    }
 
     void applyProfile(){
         MainMenu.Settings settings = mainMenu.getSettings();
@@ -118,7 +154,7 @@ public class Engine {
                 mainMenu.setScreen(MainMenu.Screen.Profile);
                 break;
             case GO_SERVERS: mainMenu.setScreen(MainMenu.Screen.Servers); break;
-            case GO_MAIN: mainMenu.setScreen(MainMenu.Screen.Main); break;
+            case GO_MAIN: mainMenu.setScreen(MainMenu.Screen.Main); gameClient.stop(); break;
             case GO_EXIT: running = false; break;
             case APPLY_SETTINGS:
                 applySettings();
@@ -173,6 +209,9 @@ public class Engine {
 
     public void start() {
 
+
+
+
         modelpack = new java.util.ArrayList<>();
         modelpack.add("model/kinger.dae");
         modelpack.add("model/ghost.dae");
@@ -182,6 +221,10 @@ public class Engine {
         modelpack.add("model/crow.dae");
         modelpack.add("model/mettaton.dae");
         modelpack.add("model/kerfus.dae");
+        modelpack.add("model/physicle.dae");
+        modelpack.add("model/clearbot.dae");
+        modelpack.add("model/creeper.dae");
+        modelpack.add("model/scp173.dae");
 
         ResourceManager.initGlobalPack("data.slop");
 
@@ -214,6 +257,7 @@ public class Engine {
 
         applySettings();
         applyProfile();
+        LoadMenuLevel();
 
         long glfwWindow = window.getWindowHandle();
         if (glfwWindow != 0) {
@@ -225,6 +269,8 @@ public class Engine {
 
         running = true;
         System.out.println("Engine started, showing main menu (splash first)...");
+
+
         loop();
     }
 
@@ -241,13 +287,16 @@ public class Engine {
                 }
             }
 
+
             switch (gameState) {
                 case MENU:
                     updateMenu(delta);
+                    updateMenuCameraSway(delta);
                     renderMenu();
                     break;
                 case CONNECTING:
                     updateConnecting(delta);
+                    updateMenuCameraSway(delta);
                     renderMenu();
                     break;
                 case PLAYING:
@@ -272,6 +321,7 @@ public class Engine {
                 menuCharacterMesh = null;
                 currentMenuModelIndex = -1;
             }
+            Scene.getInstance().update(0);
             return;
         }
 
@@ -288,23 +338,63 @@ public class Engine {
                 path = modelpack.get(targetModel);
             }
 
-            float scalemodel = window.getHeight()/1920.0f*5.0f;
-            float podmodel = 5.0f+1920.0f/window.getHeight()*2.0f;
+
 
             Shader nepl = ResourceCache.getShader("shader/vertex.glsl", "shader/fragment.glsl");
             // Ставим модель по центру координат (0,0,0)
             menuCharacterMesh = ModelLoader.load(
                     path, nepl, 0.0f, false,
-                    new Vector3f(0, podmodel, -1),
+                    new Vector3f(0, 8, -1),
                     new Vector3f(0, 0, 0),
-                    new Vector3f(scalemodel, scalemodel, scalemodel)
+                    new Vector3f(3, 3, 3),false
             );
             Scene.getInstance().addListGameObject(menuCharacterMesh);
+            Scene.getInstance().update(0);
 
             currentMenuModelIndex = targetModel;
         }
-        Scene.getInstance().update(0);
+
     }
+
+    private final float SPIN_DEGREES_PER_SEC = 50.0f; // 50°/сек ≈ 7.2 сек на оборот
+    private final float SPIN_RADIANS_PER_SEC = (float) Math.toRadians(SPIN_DEGREES_PER_SEC);
+    private final float TWO_PI = (float) (Math.PI * 2);
+
+    private float spinAngle = 0.0f;
+
+    // === SWAY === покачивание камеры в меню
+    private void updateMenuCameraSway(float delta) {
+        if (camera == null) return;
+
+        camShakeTime += delta * CAM_SWAY_SPEED;
+
+        // Комбинация двух частот — движение выглядит менее «механическим»
+        float dx = (float) Math.sin(camShakeTime * 1.0) * CAM_SWAY_AMP_X;
+        float dy = (float) Math.sin(camShakeTime * 0.7 + 1.3) * CAM_SWAY_AMP_Y;
+        float dz = (float) Math.cos(camShakeTime * 0.85 + 0.5) * CAM_SWAY_AMP_Z;
+
+        camera.getTransform().origin.set(
+                camBasePos.x + dx,
+                camBasePos.y + dy,
+                camBasePos.z + dz
+        );
+
+        // Небольшой наклон камеры, чтобы покачивание читалось
+        float yaw   = (float) Math.sin(camShakeTime * 0.6) * 0.015f; // ~0.9°
+        float pitch = (float) Math.sin(camShakeTime * 0.9 + 0.8) * 0.010f;
+
+        Quat4f qYaw = new Quat4f();
+        qYaw.set(new javax.vecmath.AxisAngle4f(0, 1, 0, yaw));
+        Quat4f qPitch = new Quat4f();
+        qPitch.set(new javax.vecmath.AxisAngle4f(1, 0, 0, pitch));
+
+        Quat4f q = new Quat4f();
+        q.mul(qYaw, qPitch); // yaw * pitch
+        camera.getTransform().setRotation(q);
+
+        camera.update();
+    }
+    // === SWAY ===
 
     private void updateMenu(float delta) {
         double mx = window.getMouseX();
@@ -321,12 +411,21 @@ public class Engine {
 
         mainMenu.updateSliderDrag(mx, window.isMouseButtonDown(GLFW_MOUSE_BUTTON_1));
 
+        // === SWAY === покачивание камеры в меню
+
+        // === SWAY ===
+
         updateMenuCharacter();
+
+
 
         // Медленно вращаем 3D-модель для демонстрации
         if (menuCharacterMesh != null) {
-            float angle = (float) Math.toRadians((System.currentTimeMillis() / 20.0) % 360);
-            javax.vecmath.AxisAngle4f axisAngle = new javax.vecmath.AxisAngle4f(0, 1, 0, angle);
+            spinAngle += SPIN_RADIANS_PER_SEC * delta;
+            if (spinAngle >= TWO_PI) {
+                spinAngle -= TWO_PI;
+            }
+            javax.vecmath.AxisAngle4f axisAngle = new javax.vecmath.AxisAngle4f(0, 1, 0, spinAngle);
             javax.vecmath.Quat4f quat = new javax.vecmath.Quat4f();
             quat.set(axisAngle);
 
@@ -343,18 +442,19 @@ public class Engine {
     }
 
     private void renderMenu() {
+
         renderer.clear();
         renderer.beginFrame();
 
-        mainMenu.beginFrameHitboxes();
-        mainMenu.render(window.getWidth(), window.getHeight());
 
-        renderer.renderset3d();
 
         for (GameObject go : Scene.getInstance().getGameObjects()) {
             renderer.submit(go);
         }
         renderer.flush();
+
+        mainMenu.beginFrameHitboxes();
+        mainMenu.render(window.getWidth(), window.getHeight());
     }
 
     private void startConnecting(String ipWithPort) {
@@ -424,10 +524,24 @@ public class Engine {
         }
     }
 
+    void cameraRestartPos(){
+        if(camera!=null) {
+            camera.update();
+            // === SWAY === сбрасываем в базовую позицию меню
+            camera.getTransform().origin.set(camBasePos.x, camBasePos.y, camBasePos.z);
+            // === SWAY ===
+            camera.getTransform().setRotation(new Quat4f(0, 0, 0, 1));
+            camera.update();
+        }
+    }
+
     private void enterGame() {
+        Scene.getInstance().update(0);
         pointbackmusic.stop();
         if(menuCharacterMesh!=null){
+            Scene.getInstance().removeListGameObject(menuCharacterMesh);
             menuCharacterMesh.clear();
+            menuCharacterMesh=null;
         }
         gameState = GameState.PLAYING;
         firstMouse = true;
@@ -441,6 +555,14 @@ public class Engine {
         if (glfwWindow != 0) {
             glfwSetInputMode(glfwWindow, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         }
+
+        if(menuScene!=null){
+            Scene.getInstance().removeListGameObject(menuScene);
+            menuScene.clear();
+            menuScene = null;
+        }
+
+        Scene.getInstance().update(0);
     }
 
     private void returnToMenu() {
@@ -450,14 +572,31 @@ public class Engine {
             gameClient = null;
         }
         if(menuCharacterMesh!=null){
+            Scene.getInstance().removeListGameObject(menuCharacterMesh);
             menuCharacterMesh.clear();
+            menuCharacterMesh=null;
         }
+
+        if(menuScene!=null){
+            Scene.getInstance().removeListGameObject(menuScene);
+            menuScene.clear();
+            menuScene=null;
+        }
+
+        Scene.getInstance().update(0);
 
         MatchManager.getInstance().clearLocalPlayer();
         MatchManager.getInstance().ClearScene();
         MatchManager.getInstance().ClearSession();
-        Scene.getInstance().clearScene();
 
+
+        cameraRestartPos();
+
+        // === SWAY === сбрасываем фазу покачивания
+        camShakeTime = 0f;
+        // === SWAY ===
+
+        LoadMenuLevel();
 
         Musicmenu = ResourceCache.getSound("sound/music/menu01.ogg");
 
@@ -494,7 +633,7 @@ public class Engine {
             lastNetworkSendTime = System.currentTimeMillis();
         }
     }
-
+boolean rendercul =false;
     private void processInput(float deltaTime) {
         Player player = MatchManager.getInstance().getLocalPlayer();
         if (player == null) return;
@@ -546,6 +685,11 @@ public class Engine {
         if (window.isKeyDown(GLFW.GLFW_KEY_A)) moveDirX -= 1f;
         if (window.isKeyDown(GLFW.GLFW_KEY_W)) moveDirZ += 1f;
         if (window.isKeyDown(GLFW.GLFW_KEY_S)) moveDirZ -= 1f;
+
+
+
+
+
 
         float length = (float) Math.sqrt(moveDirX * moveDirX + moveDirZ * moveDirZ);
         if (length > 0) {
@@ -622,6 +766,16 @@ public class Engine {
             mainMenu.dispose();
         }
         if (gameClient != null) gameClient.stop();
+        if (menuScene!= null) {
+            Scene.getInstance().removeListGameObject(menuScene);
+            menuScene.clear();
+            menuScene = null;
+        }
+        if (menuCharacterMesh!= null) {
+            Scene.getInstance().removeListGameObject(menuCharacterMesh);
+            menuCharacterMesh.clear();
+            menuCharacterMesh = null;
+        }
         Scene.getInstance().clearScene();
         ResourceManager.dispose();
         ResourceCache.cleanup();

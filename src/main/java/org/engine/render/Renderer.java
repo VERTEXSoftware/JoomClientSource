@@ -11,33 +11,30 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL20;
 
 import java.nio.FloatBuffer;
-import java.util.*;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Map;
 
 public class Renderer {
 
-    /** Максимальный размер очереди на кадр — защита от утечки/двойного submit. */
     private static final int MAX_QUEUE_SIZE = 100_000;
-
-    /** Identity-матрица для ортографического прохода спрайтов (view = identity). */
     private static final Matrix4f IDENTITY = new Matrix4f();
 
     private Camera camera;
     private FloatBuffer matrixBuffer;
 
-    /** Какой шейдер реально сейчас забинжен в GL. null == ничего / шейдер 0. */
     private Shader boundShader = null;
 
-    /** Кэш uniform'ов на шейдер. Очищается через {@link #invalidateShader(Shader)}. */
     private final Map<Shader, ShaderUniforms> uniformCache = new IdentityHashMap<>();
 
-    // --- Очереди на кадр ---
+    // --- Очереди на кадр (без окклюзии, только frustum-culled объекты) ---
     private final List<GameObject> opaqueQueue    = new ArrayList<>();
     private final List<GameObject> healthBarQueue = new ArrayList<>();
 
-    /** Флаг: был ли вызван beginFrame() и ещё не было flush(). */
     private boolean frameBegun = false;
 
-    public void init(Camera camera) throws Exception {
+    public void init(Camera camera) {
         this.camera = camera;
         this.matrixBuffer = BufferUtils.createFloatBuffer(16);
         this.boundShader = null;
@@ -60,10 +57,6 @@ public class Renderer {
     //                       ОЧЕРЕДИ
     // ============================================================
 
-    /**
-     * Вызывать РОВНО ОДИН РАЗ в начале кадра, до всех submit().
-     * Повторный вызов без flush() — ошибка.
-     */
     public void beginFrame() {
         if (frameBegun) {
             throw new IllegalStateException(
@@ -71,14 +64,11 @@ public class Renderer {
                             "Каждый кадр должен быть: beginFrame() -> submit()* -> flush().");
         }
         frameBegun = true;
+
         opaqueQueue.clear();
         healthBarQueue.clear();
     }
 
-    /**
-     * Кладёт объект в очередь. Реальная отрисовка — в {@link #flush()}.
-     * Здесь же делаем быстрый отсев (visible, mesh, AABB), чтобы не тащить мусор в очередь.
-     */
     public void submit(GameObject gameObject) {
         if (gameObject == null || !gameObject.IsVisible()) return;
 
@@ -86,49 +76,43 @@ public class Renderer {
         if (mesh == null) return;
         if (gameObject.getShader() == null) return;
 
+        // CPU frustum culling: самый дешёвый и самый полезный фильтр
         if (mesh.IsUseAABB()) {
             AABB worldAABB = gameObject.getWorldAABB();
             if (!camera.isAABBVisible(worldAABB)) return;
         }
 
+        // HealthBar3D — отдельный проход (доп. uniform healthPercent)
         if (gameObject instanceof HealthBar3D) {
-            if (healthBarQueue.size() >= MAX_QUEUE_SIZE) {
-                System.err.println("[Renderer] healthBarQueue overflow, skip object: " + gameObject);
-                return;
-            }
-            healthBarQueue.add(gameObject);
-        } else {
-            if (opaqueQueue.size() >= MAX_QUEUE_SIZE) {
-                System.err.println("[Renderer] opaqueQueue overflow, skip object: " + gameObject);
-                return;
-            }
-            opaqueQueue.add(gameObject);
+            addItem(healthBarQueue, gameObject);
+            return;
         }
+
+        addItem(opaqueQueue, gameObject);
+    }
+
+    private void addItem(List<GameObject> queue, GameObject go) {
+        if (queue.size() >= MAX_QUEUE_SIZE) {
+            System.err.println("[Renderer] queue overflow, skip object: " + go);
+            return;
+        }
+        queue.add(go);
     }
 
     // ============================================================
     //                       FLUSH (DRAW)
     // ============================================================
 
-    /**
-     * Рисует всё, что накопилось в очередях.
-     * Сортировки нет: шейдеры часто повторяются, поэтому группировка
-     * не даёт выигрыша — рисуем в порядке submit().
-     */
     public void flush() {
-        // --- 1. Обычные объекты ---
+        // --- 1. Обычные объекты (3D, с depth-write) ---
         drawBatch(opaqueQueue, false);
 
         // --- 2. HealthBar3D (отдельный проход, доп. uniform) ---
         drawBatch(healthBarQueue, true);
 
-        // Кадр завершён — разрешаем следующий beginFrame()
         frameBegun = false;
     }
 
-    /**
-     * @param withHealthUniform true — для HealthBar3D, передаём healthPercent на объект.
-     */
     private void drawBatch(List<GameObject> queue, boolean withHealthUniform) {
         if (queue.isEmpty()) return;
 
@@ -146,7 +130,6 @@ public class Renderer {
                 currentU = uniformsFor(shd);
                 bindShader(shd);
 
-                // projection/view — один раз на шейдер за проход
                 camera.getProjectionMatrix().get(matrixBuffer.rewind());
                 GL20.glUniformMatrix4fv(currentU.projection, false, matrixBuffer);
 
@@ -154,8 +137,7 @@ public class Renderer {
                 GL20.glUniformMatrix4fv(currentU.view, false, matrixBuffer);
             }
 
-            // --- Смена текстуры ---
-            // Не unbind'им старую: следующий bind() перезапишет привязку.
+            // --- Смена текстуры (не перебиндиваем одинаковые) ---
             Texture tex = go.getTexture();
             if (tex != currentTex) {
                 if (tex != null) tex.bind();
@@ -166,11 +148,11 @@ public class Renderer {
             go.getModelMatrix().get(matrixBuffer.rewind());
             GL20.glUniformMatrix4fv(currentU.model, false, matrixBuffer);
 
-            // --- color (пропускаем, если не изменился) ---
+            // --- color ---
             Vector4f clr = go.getColor();
             GL20.glUniform4f(currentU.color, clr.x, clr.y, clr.z, clr.w);
 
-            // --- healthPercent (только для HealthBar3D) ---
+            // --- healthPercent ---
             if (withHealthUniform && currentU.healthPercent >= 0 && go instanceof HealthBar3D) {
                 GL20.glUniform1f(currentU.healthPercent, ((HealthBar3D) go).getHealthPercent());
             }
@@ -178,18 +160,12 @@ public class Renderer {
             // --- draw ---
             go.getMesh().render();
         }
-
-        // Финальный unbind текстуры НЕ нужен — следующий bind() перезапишет.
     }
 
     // ============================================================
     //                       СПРАЙТЫ
     // ============================================================
 
-    /**
-     * Спрайты рисуем отдельным проходом: depth test выкл., cull выкл., blend вкл.
-     * После — восстанавливаем 3D-состояние через renderset3d().
-     */
     public void renderSprite(Sprite sprite) {
         if (sprite == null) return;
 
@@ -206,11 +182,9 @@ public class Renderer {
         bindShader(shd);
         ShaderUniforms u = uniformsFor(shd);
 
-        // projection — ортографическая
         camera.getOrthoMatrix().get(matrixBuffer.rewind());
         GL20.glUniformMatrix4fv(u.projection, false, matrixBuffer);
 
-        // view = identity (ортопроекция работает в screen-space)
         if (u.view >= 0) {
             IDENTITY.get(matrixBuffer.rewind());
             GL20.glUniformMatrix4fv(u.view, false, matrixBuffer);
@@ -223,8 +197,6 @@ public class Renderer {
         if (texture != null) texture.bind();
         mesh.render();
         if (texture != null) texture.unbind();
-
-        // depth/cull восстановит renderset3d()/clear()
     }
 
     // ============================================================
@@ -248,8 +220,12 @@ public class Renderer {
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
 
-        // сбрасываем кэш шейдера, т.к. GL-состояние могло измениться извне
         boundShader = null;
+    }
+
+    public void cleanup() {
+        // Окклюдера больше нет — освобождать нечего.
+        // Здесь можно освободить ресурсы, если появятся.
     }
 
     // ============================================================
@@ -268,10 +244,6 @@ public class Renderer {
                 s -> new ShaderUniforms(s.getProgramId()));
     }
 
-    /**
-     * Удаляет кэш uniform'ов для шейдера.
-     * Вызывать при удалении/пересоздании шейдера, иначе IdentityHashMap держит ссылку вечно.
-     */
     public void invalidateShader(Shader shd) {
         if (shd == null) return;
         uniformCache.remove(shd);
@@ -280,7 +252,6 @@ public class Renderer {
         }
     }
 
-    /** Полная очистка кэша uniform'ов (например, при смене сцены). */
     public void clearUniformCache() {
         uniformCache.clear();
         boundShader = null;

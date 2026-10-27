@@ -19,11 +19,14 @@ import org.engine.utils.ResourceCache;
 import org.joml.Vector3f;
 import io.netty.channel.ChannelHandlerContext;
 import org.joml.Vector3fc;
+import org.slvl.ManagerPack;
+
 import javax.vecmath.Quat4f;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -52,11 +55,11 @@ public class MatchManager {
     private final Map<Integer, PlayerSession> net_sessions = new ConcurrentHashMap<>();
     private final ConcurrentLinkedQueue<Object> incomingPackets = new ConcurrentLinkedQueue<>();
 
-    // НОВОЕ: Состояние матча на клиенте
+    // Состояние матча на клиенте
     private boolean matchInProgress = false;
     private float matchTimeLeft = 0f;
     private String currentMapName = "";
-
+    private long hash=-1;
 
     public Map<Integer, NetPlayer> getNet_players() {
         return net_players;
@@ -65,6 +68,20 @@ public class MatchManager {
     public MatchManager() {
         instance = this; // Сохраняем ссылку на себя
         matchInProgress = false;
+
+        try {
+            File jarFile = new File(
+                    MatchManager.class.getProtectionDomain()
+                            .getCodeSource()
+                            .getLocation()
+                            .toURI()
+            );
+            hash = ManagerPack.crc64File(jarFile.getName());
+        } catch (IOException e) {
+            // throw new RuntimeException(e);
+        } catch (URISyntaxException e) {
+           // throw new RuntimeException(e);
+        }
     }
 
     public static MatchManager getInstance() {
@@ -93,7 +110,7 @@ public class MatchManager {
         this.cur_name_player = "Player";
         cur_model_player = 0;
 
-        // НОВОЕ: Изначально матч не идет
+        // Изначально матч не идет
 
         Musiclevel= new ArrayList<>();
         Musiclevelend= new ArrayList<>();
@@ -106,21 +123,23 @@ public class MatchManager {
 
     public void CameraBasePosition(){
         if(cur_cam==null){return;}
+        cur_cam.update();
         cur_cam.getTransform().origin.set(0, 10, 5);
         cur_cam.getTransform().setRotation(new Quat4f(0,0,0,1));
+        cur_cam.update();
     }
 
-    public void LoadScene(String mapName, String urlDownload) {
+
+
+
+    public void LoadScene(String mapName, String urlDownload, long crc64) {
         CameraBasePosition();
-        javax.vecmath.Quat4f bulletRot = new javax.vecmath.Quat4f(0, 0, 0, 1);
-        cur_cam.getTransform().setRotation(bulletRot);
 
         this.currentMapName = mapName;
         gmhud.setNameMap(this.currentMapName);
         gmhud.setGuiMode(GameHud.TypeMode.LoadMap);
 
-
-        // 1. Очистка старой сцены (удаляем старую карту и игроков)
+        // 1. Очистка старой сцены
         ClearScene();
         ResourceCache.cleanup();
         Musiclevel.clear();
@@ -134,12 +153,31 @@ public class MatchManager {
         Musiclevelend.add(ResourceCache.getSound("sound/music/finish01.ogg"));
         Musiclevelend.add(ResourceCache.getSound("sound/music/finish02.ogg"));
 
-        // 2. Проверка наличия файла "maps/"+ mapName
+        // 2. Проверка наличия и целостности файла "maps/"+ mapName
         String mapPath = "maps/" + mapName;
         File mapFile = new File(mapPath);
 
-        if (!mapFile.exists()) {
+        boolean needDownload = true;
+
+        if (mapFile.exists()) {
+            try {
+                long actualCrc = ManagerPack.crc64File(mapPath);
+                if (actualCrc == crc64) {
+                    System.out.println("Файл карты найден и прошёл проверку CRC64.");
+                    needDownload = false;
+                } else {
+                    System.out.println("CRC64 не совпадает (ожидалось " + crc64 +
+                            ", получено " + actualCrc + "). Перезагрузка карты...");
+                }
+            } catch (IOException e) {
+                System.err.println("Ошибка при чтении файла карты для проверки CRC64: " + e.getMessage());
+                e.printStackTrace();
+            }
+        } else {
             System.out.println("Файл карты не найден. Начинаем загрузку по URL: " + urlDownload);
+        }
+
+        if (needDownload) {
             try {
                 // Создаем папки, если их еще не существует
                 File parentDir = mapFile.getParentFile();
@@ -147,10 +185,12 @@ public class MatchManager {
                     parentDir.mkdirs();
                 }
 
-                // Выполняем загрузку файла по URL
+                // Выполняем загрузку файла по URL во временный файл,
+                // чтобы не повредить существующую карту при обрыве соединения
+                File tmpFile = new File(mapPath + ".tmp");
                 URL url = new URL(urlDownload);
                 try (InputStream in = url.openStream();
-                     FileOutputStream out = new FileOutputStream(mapFile)) {
+                     FileOutputStream out = new FileOutputStream(tmpFile)) {
 
                     byte[] buffer = new byte[8192];
                     int bytesRead;
@@ -158,28 +198,39 @@ public class MatchManager {
                         out.write(buffer, 0, bytesRead);
                     }
                 }
-                System.out.println("Карта успешно загружена и сохранена в: " + mapPath);
+
+                // Проверяем CRC64 загруженного файла
+                long downloadedCrc = ManagerPack.crc64File(tmpFile.getPath());
+                if (downloadedCrc != crc64) {
+                    tmpFile.delete();
+                    throw new IOException("CRC64 загруженного файла не совпадает (ожидалось " +
+                            crc64 + ", получено " + downloadedCrc + ")");
+                }
+
+                // Атомарно заменяем старый файл новым
+                if (mapFile.exists()) {
+                    mapFile.delete();
+                }
+                if (!tmpFile.renameTo(mapFile)) {
+                    throw new IOException("Не удалось переименовать временный файл карты");
+                }
+
+                System.out.println("Карта успешно загружена, проверена и сохранена в: " + mapPath);
 
             } catch (Exception e) {
                 System.err.println("Ошибка при загрузке карты по URL: " + e.getMessage());
                 e.printStackTrace();
 
-                // --- ВЫПОЛНЯЕМ ВОЗВРАТ В МЕНЮ И ОТКЛЮЧЕНИЕ ---
+                // --- ВОЗВРАТ В МЕНЮ И ОТКЛЮЧЕНИЕ ---
 
-                // 1. Отключаемся от сервера
                 if (networkContext != null) {
                     System.out.println("Отключение от сервера...");
                     networkContext.close();
                 }
 
-                // 2. Очищаем локального игрока и сессию
                 clearLocalPlayer();
-
-                // 3. Возвращаем HUD в режим меню (если у вас есть TypeMode.MainMenu, используйте его)
-                // В данном случае возвращаем пустой рендер, как при логине
                 gmhud.setGuiMode(GameHud.TypeMode.NoneRender);
 
-                // Прерываем выполнение метода, так как карта не может быть загружена
                 return;
             }
         }
@@ -192,10 +243,9 @@ public class MatchManager {
 
         // 4. Карта загружена, отправляем серверу ClientReadyPacket
         SendReady();
-
     }
 
-    // НОВОЕ: Очистка сцены перед загрузкой новой карты
+    // Очистка сцены перед загрузкой новой карты
 
     public void ClearSession(){
         this.net_sessions.clear();
@@ -215,8 +265,8 @@ public class MatchManager {
         }
         net_players.clear();
         // Если в Scene есть метод очистки геометрии карты, вызовите его здесь.
-       Scene.getInstance().clearScene();
-
+        Scene.getInstance().clearScene();
+        Scene.getInstance().update(0);
     }
 
     public void Clear() {
@@ -286,10 +336,18 @@ public class MatchManager {
         return bestPoints.get(random.nextInt(bestPoints.size()));
     }
 
+    private static long seedFromId(long id) {
+        long z = id + 0x9E3779B97F4A7C15L;
+        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+        z = z ^ (z >>> 31);
+        return z;
+    }
 
     public void SpawnLocalPlayer(int id, String name) {
         this.cur_id_player = id;
-        random.setSeed(System.nanoTime()*id);
+        long salt = System.nanoTime();
+        random = new Random(seedFromId(id) ^ salt);
 
         PlayerSession session = net_sessions.get(id);
         if (session != null) {
@@ -358,7 +416,6 @@ public class MatchManager {
     }
 
     public void clearLocalPlayer() {
-        CameraBasePosition();
         this.cur_id_player=-1;
         if(this.cur_player!=null){
             this.cur_player.Destroy();
@@ -371,10 +428,10 @@ public class MatchManager {
 
     public void SendLogin(String name) {
         this.cur_name_player = name;
-        if (networkContext != null) { networkContext.writeAndFlush(new LoginPacket(name,cur_model_player)); }
+        if (networkContext != null) { networkContext.writeAndFlush(new LoginPacket(name,cur_model_player,hash)); }
     }
 
-    // НОВЫЙ МЕТОД: Отправка готовности после загрузки карты
+    // Отправка готовности после загрузки карты
     public void SendReady() {
         gmhud.setGuiMode(GameHud.TypeMode.WaitingMatch);
         if (networkContext != null) {
@@ -384,7 +441,7 @@ public class MatchManager {
     }
 
     public void SendData() {
-        // НОВОЕ: Не отправляем данные, если матч не идет (мы в лобби или на экране статистики)
+        // Не отправляем данные, если матч не идет (мы в лобби или на экране статистики)
         if (!matchInProgress) return;
 
         if (cur_player == null || networkContext == null || cur_id_player == -1) return;
@@ -395,6 +452,8 @@ public class MatchManager {
         bulletTransform.getRotation(bulletRot);
         float rotY = (float) Math.atan2(2.0f * (bulletRot.y * bulletRot.w + bulletRot.x * bulletRot.z), 1.0f - 2.0f * (bulletRot.y * bulletRot.y + bulletRot.x * bulletRot.x));
         float yawDegrees = (float) Math.toDegrees(rotY);
+        // ИЗМЕНЕНО: health в пакете — только справочная информация, сервер его игнорирует
+        // (здоровье игроков хранится на сервере и рассылается обратно в state-пакетах).
         int health = cur_player.getHealth();
         int gunType = cur_player.getCurrentWeaponIndex();
         PlayerStatePacket packet = new PlayerStatePacket(cur_id_player, bulletPos.x, bulletPos.y, bulletPos.z, yawDegrees, health, gunType);
@@ -402,7 +461,7 @@ public class MatchManager {
     }
 
     public void SendAttack(int idEnemy,int type, int damage, float x, float y, float z,float px, float py, float pz) {
-        if (!matchInProgress) return; // НОВОЕ
+        if (!matchInProgress) return;
         if (networkContext != null && cur_id_player != -1 && cur_id_player != idEnemy) {
             networkContext.writeAndFlush(new PlayerAttackPacket(cur_id_player, idEnemy,type, damage,x,y,z,px,py,pz));
         }
@@ -444,7 +503,7 @@ public class MatchManager {
 
     }
     public void SendDeath() {
-        if (!matchInProgress) return; // НОВОЕ
+        if (!matchInProgress) return;
         if (networkContext != null && cur_id_player != -1 && cur_player != null) {
             networkContext.writeAndFlush(new PlayerDeathPacket(cur_id_player, -1));
         }
@@ -486,7 +545,7 @@ public class MatchManager {
     private void handleLoginResponse(LoginResponsePacket p) {
         System.out.println("Получен ID от сервера: " + p.id);
         random.setSeed(System.nanoTime()+ p.id);
-        // НОВОЕ: Локальный игрок пока не спавнится. Ждем начала матча (MatchStartPacket).
+        // Локальный игрок пока не спавнится. Ждем начала матча (MatchStartPacket).
         // Мы только запоминаем ID.
         this.cur_id_player = p.id;
         this.cur_name_player = p.name;
@@ -494,15 +553,15 @@ public class MatchManager {
         gmhud.setGuiMode(GameHud.TypeMode.NoneRender);
     }
 
-    // НОВЫЙ МЕТОД: Обработка инфы о карте
+    // Обработка инфы о карте
     private void handleMapInfo(MapInfoPacket p) {
         System.out.println("Сервер прислал карту: " + p.mapName + " | URL: " + p.urlDownload);
         // Запускаем загрузку/скачивание карты
-        LoadScene(p.mapName, p.urlDownload);
+        LoadScene(p.mapName, p.urlDownload,p.hashcrc64);
 
     }
 
-    // НОВЫЙ МЕТОД: Начало матча
+    // Начало матча
     private void handleMatchStart(MatchStartPacket p) {
         pointbackmusic.setAmbient(true);
         pointbackmusic.setVolume(0.2f);
@@ -521,7 +580,7 @@ public class MatchManager {
         gmhud.setGuiMode(GameHud.TypeMode.FPSPlayer);
     }
 
-    // НОВЫЙ МЕТОД: Конец матча
+    // Конец матча
     private void handleMatchEnd() {
         pointbackmusic.stop();
         pointbackmusic.playRnd(Musiclevelend,false);
@@ -546,7 +605,7 @@ public class MatchManager {
         gmhud.setGuiMode(GameHud.TypeMode.EndMatch);
     }
 
-    // НОВЫЙ МЕТОД: Прием статистики от сервера
+    // Прием статистики от сервера
     private void handlePlayerStats(PlayerStatsPacket p) {
         System.out.println("STATS: " + p.name + " | K: " + p.kills + " | D: " + p.deaths);
         // Передаем данные в HUD для отрисовки таблицы лидеров
@@ -570,7 +629,7 @@ public class MatchManager {
         if (p.id == cur_id_player) {
             gmhud.setGuiMode(GameHud.TypeMode.DeadPlayer);
             if (cur_player != null) {
-                cur_player.setDamage(1000);
+                // cur_player.setDamage(1000);
                 cur_player.Destroy();
                 cur_player = null;
             }
@@ -624,6 +683,20 @@ public class MatchManager {
     }
 
     private void handlePlayerState(PlayerStatePacket p) {
+        // ИЗМЕНЕНО: здоровье игроков хранит СЕРВЕР и рассылает его в state-пакетах
+        // (в т.ч. самому игроку). Если пакет про нашего локального игрока —
+        // применяем ТОЛЬКО серверное здоровье, позицию не трогаем.
+        if (p.id == cur_id_player) {
+            if (cur_player != null && p.health > 0) {
+                cur_player.health = p.health;
+            }
+            PlayerSession session = net_sessions.get(p.id);
+            if (session != null && p.health > 0) {
+                session.health = p.health;
+            }
+            return;
+        }
+
         NetPlayer netPlayer = net_players.get(p.id);
         if (netPlayer != null) {
             netPlayer.applyNetworkState(p.x, p.y, p.z, p.rotY, p.health,p.gunType);
@@ -650,7 +723,8 @@ public class MatchManager {
 
         if (p.idEnemy == cur_id_player) {
             if (cur_player != null) {
-                cur_player.setDamage(p.damage);
+                // ИЗМЕНЕНО: урон не применяем локально — серверное здоровье придет
+                // в ближайшем state-пакете (до 50 мс). Здесь только отброс от попадания.
 
                 RigidBody rggi = cur_player.getRigidBody();
                 if(rggi!=null) {

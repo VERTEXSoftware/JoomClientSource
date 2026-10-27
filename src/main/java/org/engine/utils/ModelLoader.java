@@ -42,13 +42,13 @@ public class ModelLoader {
                 collision,
                 pos,
                 rot,
-                scale
+                scale,true
         );
 
         return levelObjects;
     }
 
-    public static List<GameObject> load(String filePath, Shader shader, float mass, boolean phys, Vector3f startPosition, Vector3f startRotation, Vector3f startScale) {
+    public static List<GameObject> load(String filePath, Shader shader, float mass, boolean phys, Vector3f startPosition, Vector3f startRotation, Vector3f startScale,boolean useaabb) {
         int flags = Assimp.aiProcess_Triangulate | Assimp.aiProcess_FlipUVs | Assimp.aiProcess_JoinIdenticalVertices;
 
         String extension = "";
@@ -76,7 +76,7 @@ public class ModelLoader {
         List<GameObject> gameObjects = new ArrayList<>();
 
         // Передаем filePath для формирования ключей кеша мешей
-        processNode(filePath, scene, scene.mRootNode(), new Matrix4f(), phys, shader, mass, startPosition, startRotation, startScale, gameObjects);
+        processNode(filePath, scene, scene.mRootNode(), new Matrix4f(), phys, shader, mass, startPosition, startRotation, startScale, gameObjects,useaabb);
 
         Assimp.aiReleaseImport(scene);
         return gameObjects;
@@ -135,7 +135,7 @@ public class ModelLoader {
         return mesh;
     }
 
-    private static void processNode(String filePath, AIScene scene, AINode node, Matrix4f parentTransform, boolean phys, Shader shader, float mass, Vector3f startPosition, Vector3f startRotation, Vector3f startScale, List<GameObject> gameObjects) {
+    private static void processNode(String filePath, AIScene scene, AINode node, Matrix4f parentTransform, boolean phys, Shader shader, float mass, Vector3f startPosition, Vector3f startRotation, Vector3f startScale, List<GameObject> gameObjects,boolean useaabb) {
         if (node == null) return;
 
         Matrix4f nodeTransform = toJomlMatrix(node.mTransformation());
@@ -161,7 +161,7 @@ public class ModelLoader {
                     float[] positions = extractPositions(aiMesh, globalTransform);
                     float[] texCoords = extractTexCoords(aiMesh);
                     int[] indices = extractIndices(aiMesh);
-                    mesh = new Mesh(positions, texCoords, indices, true);
+                    mesh = new Mesh(positions, texCoords, indices, useaabb);
                     ResourceCache.putMesh(meshKey, mesh);
                 }
 
@@ -203,7 +203,7 @@ public class ModelLoader {
         PointerBuffer children = node.mChildren();
         for (int i = 0; i < numChildren; i++) {
             AINode child = AINode.create(children.get(i));
-            processNode(filePath, scene, child, globalTransform, phys, shader, mass, startPosition, startRotation, startScale, gameObjects);
+            processNode(filePath, scene, child, globalTransform, phys, shader, mass, startPosition, startRotation, startScale, gameObjects,useaabb);
         }
     }
 

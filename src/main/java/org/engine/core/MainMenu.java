@@ -40,7 +40,6 @@ public class MainMenu {
         GO_EXIT,
         APPLY_SETTINGS,
         SAVE_PROFILE,
-        // BACK = отменить изменения и вернуть то, что было до входа в экран
         DISCARD_CHANGES,
         ADD_SERVER,
         CONNECT_SERVER,
@@ -72,13 +71,25 @@ public class MainMenu {
     private static final float VOL_MIN  = 0.0f;
     private static final float VOL_MAX  = 1.0f;
 
+    // --- Базовое разрешение для масштабирования UI ---
+    private static final float BASE_WIDTH  = 1920f;
+    private static final float BASE_HEIGHT = 1080f;
+    private static final float SCALE_MIN   = 0.5f;
+    private static final float SCALE_MAX   = 3.0f;
+
+    private float uiScale = 1.0f;
+    private int   fbWidth = 1920, fbHeight = 1080;
+
     // --- Splash-баннер ---
-    private static final float SPLASH_DURATION = 3.0f;   // секунд
-    private static final float SPLASH_FADE     = 0.4f;   // секунд на fade in/out
+    private static final float SPLASH_DURATION = 4.0f;
+    private static final float SPLASH_FADE     = 0.4f;
     private float splashElapsed = 0.0f;
-    private float alphasplash   = 0.0f;                  // <-- НОВОЕ
+    private float alphasplash   = 0.0f;
     private ByteBuffer splashBuffer;
     private int splashImage = -1;
+
+    // --- Лимит длины строки ввода ---
+    private static final int INPUT_MAX_LEN = 24;
 
     public static final class Settings {
         public int    width           = 1920;
@@ -158,11 +169,9 @@ public class MainMenu {
 
     private long vg;
     private ByteBuffer fontBuffer;
-    private ByteBuffer bgBuffer; // Для удержания буфера фона в памяти
     private static final String FONT_NAME = "menu-font";
     private static final String FONT_FILE = "font/def.ttf";
 
-    private int bgImage = -1;
 
     private final Settings  settings = new Settings();
     private final List<ServerInfo> servers = new ArrayList<>();
@@ -181,13 +190,27 @@ public class MainMenu {
 
     public void onCharTyped(char c) {
         if (!inputActive) return;
-        if (inputText.length() >= 24) return;
+        if (inputText.length() >= INPUT_MAX_LEN) return;
         if (c < 32 || c == 127) return;
         inputText += c;
     }
 
-    public void onKeyPressed(int keyCode, int mods) {
+    public void onKeyPressed(int keyCode, int mods, int action) {
         if (!inputActive) return;
+
+        boolean ctrl = (mods & org.lwjgl.glfw.GLFW.GLFW_MOD_CONTROL) != 0;
+
+        if (ctrl && keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_V) {
+            if (action == org.lwjgl.glfw.GLFW.GLFW_PRESS) {
+                pasteFromClipboard();
+            }
+            return;
+        }
+
+        if (action != org.lwjgl.glfw.GLFW.GLFW_PRESS && action != org.lwjgl.glfw.GLFW.GLFW_REPEAT) {
+            return;
+        }
+
         switch (keyCode) {
             case org.lwjgl.glfw.GLFW.GLFW_KEY_BACKSPACE:
                 if (!inputText.isEmpty()) {
@@ -203,6 +226,28 @@ public class MainMenu {
                 break;
             default:
                 break;
+        }
+    }
+
+    private void pasteFromClipboard() {
+        long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+        if (window == 0) return;
+
+        String clip = org.lwjgl.glfw.GLFW.glfwGetClipboardString(window);
+        if (clip == null || clip.isEmpty()) return;
+
+        int room = INPUT_MAX_LEN - inputText.length();
+        if (room <= 0) return;
+
+        StringBuilder sb = new StringBuilder(room);
+        for (int i = 0; i < clip.length() && sb.length() < room; i++) {
+            char c = clip.charAt(i);
+            if (c >= 32 && c != 127) {
+                sb.append(c);
+            }
+        }
+        if (sb.length() > 0) {
+            inputText += sb;
         }
     }
 
@@ -243,7 +288,6 @@ public class MainMenu {
         vg = nvgCreate(NVG_ANTIALIAS | NVG_STENCIL_STROKES);
         if (vg == NULL) throw new Exception("Не удалось инициализировать NanoVG");
 
-        // --- Загрузка шрифта через ResourceManager ---
         fontBuffer = ResourceManager.getResource(FONT_FILE);
         if (fontBuffer == null) {
             throw new Exception("Файл шрифта не найден в ресурсах: " + FONT_FILE);
@@ -251,17 +295,8 @@ public class MainMenu {
         if (nvgCreateFontMem(vg, FONT_NAME, fontBuffer, false) == -1)
             throw new Exception("Не удалось загрузить шрифт");
 
-        // --- Загрузка фонового изображения через ResourceManager ---
-        bgBuffer = ResourceManager.getResource("texture/menu01.png");
-        if (bgBuffer == null) {
-            throw new Exception("Файл фона не найден в ресурсах: texture/menu01.png");
-        }
 
-        bgImage = nvgCreateImageMem(vg, 0, bgBuffer);
-        if (bgImage == -1)
-            throw new Exception("Не удалось загрузить фон: texture/menu01.png");
 
-        // --- Загрузка стартового баннера ---
         splashBuffer = ResourceManager.getResource("texture/startscreen.png");
         if (splashBuffer != null) {
             splashImage = nvgCreateImageMem(vg, 0, splashBuffer);
@@ -279,13 +314,16 @@ public class MainMenu {
         playerModels.add("Karen");
         playerModels.add("Crow");
         playerModels.add("Mettaton");
-        playerModels.add("kerfus");
+        playerModels.add("Kerfus");
+        playerModels.add("Physicle");
+        playerModels.add("Clearbot");
+        playerModels.add("Creeper");
+        playerModels.add("SCP-173");
 
-        servers.add(new ServerInfo("Local Test",   "127.0.0.1:12789"));
+        servers.add(new ServerInfo("Local Test", "127.0.0.1:12789"));
 
         loadConfig();
 
-        // Стартуем со сплэша
         screen = Screen.Splash;
         splashElapsed = 0.0f;
     }
@@ -297,21 +335,33 @@ public class MainMenu {
     public void setMousePosition(float x, float y) { mouseX = x; mouseY = y; }
 
     // =====================================================================
+    // Масштабирование UI
+    // =====================================================================
+
+    private void updateScale(int w, int h) {
+        fbWidth = w;
+        fbHeight = h;
+        float sx = w / BASE_WIDTH;
+        float sy = h / BASE_HEIGHT;
+        uiScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.min(sx, sy)));
+    }
+
+    /** Масштабирует размер относительно базового разрешения. */
+    private float s(float v) { return v * uiScale; }
+
+    // =====================================================================
     // Splash-баннер
     // =====================================================================
 
-    /** Возвращает true, пока баннер ещё показывается. */
     public boolean isSplashActive() {
         return screen == Screen.Splash;
     }
 
-    /** Вызывать каждый кадр из Engine, пока screen == Splash. */
     public void updateSplash(float delta) {
         if (screen != Screen.Splash) return;
 
         splashElapsed += delta;
         if (splashElapsed >= SPLASH_DURATION) {
-            // Убираем картинку из памяти GPU — она больше не нужна
             if (splashImage != -1 && vg != NULL) {
                 nvgDeleteImage(vg, splashImage);
                 splashImage = -1;
@@ -324,7 +374,7 @@ public class MainMenu {
     }
 
     // =====================================================================
-    // Откат изменений по кнопке BACK (экраны Settings и Profile)
+    // Откат изменений по кнопке BACK
     // =====================================================================
 
     private Settings editBackup = null;
@@ -395,13 +445,13 @@ public class MainMenu {
     }
 
     public void render(int w, int h) {
+        updateScale(w, h);
+
         nvgBeginFrame(vg, w, h, 1.0f);
 
         if (screen == Screen.Splash) {
             renderSplash(w, h);
         } else {
-            drawBackground(w, h);
-
             switch (screen) {
                 case Main:       renderMain(w, h);       break;
                 case Settings:   renderSettings(w, h);   break;
@@ -417,22 +467,17 @@ public class MainMenu {
     }
 
     private void renderSplash(int w, int h) {
-        // Чёрный фон
         nvgBeginPath(vg);
         nvgRect(vg, 0, 0, w, h);
         nvgFillColor(vg, rgba(0xFF000000));
         nvgFill(vg);
 
         if (splashImage != -1) {
-            // Плавное появление / исчезновение
             if (splashElapsed < SPLASH_FADE) {
-                // fade in: 0 -> 1
                 alphasplash = splashElapsed / SPLASH_FADE;
             } else if (splashElapsed > SPLASH_DURATION - SPLASH_FADE) {
-                // fade out: 1 -> 0
                 alphasplash = (SPLASH_DURATION - splashElapsed) / SPLASH_FADE;
             } else {
-                // полностью видим
                 alphasplash = 1.0f;
             }
             alphasplash = Math.max(0f, Math.min(1f, alphasplash));
@@ -448,36 +493,25 @@ public class MainMenu {
         }
     }
 
-    public void drawBackground(int w, int h) {
-        if (bgImage != -1) {
-            NVGPaint paint = NVGPaint.calloc();
-            nvgImagePattern(vg, 0, 0, w, h, 0, bgImage, 1.0f, paint);
 
-            nvgBeginPath(vg);
-            nvgRect(vg, 0, 0, w, h);
-            nvgFillPaint(vg, paint);
-            nvgFill(vg);
-            paint.free();
-        }
-    }
 
     private void renderMain(int w, int h) {
         nvgFontFace(vg, FONT_NAME);
 
-        float bw = 420, bh = 64, gap = 18;
-        float bx = w / 2.0f - bw / 2.0f;
+        float bw  = s(420), bh = s(64), gap = s(18);
+        float bx  = w / 2.0f - bw / 2.0f;
         float totalButtonsHeight = 4 * bh + 3 * gap;
-        float by = (h - totalButtonsHeight) / 2.0f + 150;
+        float by  = (h - totalButtonsHeight) / 2.0f + s(150);
 
-        drawButton(bx, by,                    bw, bh, "SERVER BROWSER",  COL_ACCENT, ClickAction.GO_SERVERS);
-        drawButton(bx, by + (bh + gap) * 1,   bw, bh, "PROFILE",         COL_TEXT,   ClickAction.GO_PROFILE);
-        drawButton(bx, by + (bh + gap) * 2,   bw, bh, "SETTINGS",        COL_TEXT,   ClickAction.GO_SETTINGS);
-        drawButton(bx, by + (bh + gap) * 3,   bw, bh, "EXIT",            COL_DANGER, ClickAction.GO_EXIT);
+        drawButton(bx, by,                  bw, bh, "SERVER BROWSER", COL_ACCENT, ClickAction.GO_SERVERS);
+        drawButton(bx, by + (bh + gap) * 1, bw, bh, "PROFILE",        COL_TEXT,   ClickAction.GO_PROFILE);
+        drawButton(bx, by + (bh + gap) * 2, bw, bh, "SETTINGS",       COL_TEXT,   ClickAction.GO_SETTINGS);
+        drawButton(bx, by + (bh + gap) * 3, bw, bh, "EXIT",           COL_DANGER, ClickAction.GO_EXIT);
 
-        nvgFontSize(vg, 16.0f);
+        nvgFontSize(vg, s(16.0f));
         nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_BOTTOM);
         nvgFillColor(vg, rgba(COL_TEXT_DIM));
-        nvgText(vg, w / 2.0f, h - 20,
+        nvgText(vg, w / 2.0f, h - s(20),
                 "Player: " + settings.playerName + "   ·   Model: " +
                         playerModels.get(settings.playerModel));
     }
@@ -485,173 +519,167 @@ public class MainMenu {
     private void renderSettings(int w, int h) {
         drawTitle(w, "SETTINGS", h);
 
-        float panelW = 720, panelH = 560;
+        float panelW = s(720), panelH = s(560);
         float px = (w - panelW) / 2.0f;
-        float py = Math.max(80, (h - panelH) / 2.0f + 40);
+        float py = Math.max(s(80), (h - panelH) / 2.0f + s(40));
 
         drawPanel(px, py, panelW, panelH);
 
-        float labelX = px + 32;
-        float valueRightX = px + panelW - 32;
-        float rowY   = py + 40;
-        float rowH   = 52;
-        float uiW = 220;
-        float uiX = valueRightX - uiW;
+        float labelX      = px + s(32);
+        float valueRightX = px + panelW - s(32);
+        float rowY        = py + s(40);
+        float rowH        = s(52);
+        float uiW         = s(220);
+        float uiX         = valueRightX - uiW;
+        float navW        = s(40);
+        float resBtnW     = s(140);
 
         drawLabel(labelX, rowY, "RESOLUTION");
         int resIdx = getResolutionIndex();
         String resStr = RESOLUTIONS[resIdx][0] + " x " + RESOLUTIONS[resIdx][1];
-        float resBtnW = 140;
-        float navW = 40;
-        float totalResW = resBtnW + navW * 2 + 10;
+        float totalResW = resBtnW + navW * 2 + s(10);
         float resMx = valueRightX - totalResW;
-        drawButton(resMx, rowY, navW, 36, "<", COL_TEXT, ClickAction.RES_PREV);
-        drawValueButton(resMx + navW + 5, rowY, resBtnW, 36, resStr, ClickAction.NONE);
-        drawButton(resMx + navW + resBtnW + 10, rowY, navW, 36, ">", COL_TEXT, ClickAction.RES_NEXT);
+        drawButton(resMx, rowY, navW, s(36), "<", COL_TEXT, ClickAction.RES_PREV);
+        drawValueButton(resMx + navW + s(5), rowY, resBtnW, s(36), resStr, ClickAction.NONE);
+        drawButton(resMx + navW + resBtnW + s(10), rowY, navW, s(36), ">", COL_TEXT, ClickAction.RES_NEXT);
         rowY += rowH;
 
         drawLabel(labelX, rowY, "FULLSCREEN");
-        drawToggle(uiX, rowY, uiW, 36, settings.fullscreen, ClickAction.TOGGLE_FULLSCREEN);
+        drawToggle(uiX, rowY, uiW, s(36), settings.fullscreen, ClickAction.TOGGLE_FULLSCREEN);
         rowY += rowH;
 
         drawLabel(labelX, rowY, "VSYNC");
-        drawToggle(uiX, rowY, uiW, 36, settings.vsync, ClickAction.TOGGLE_VSYNC);
+        drawToggle(uiX, rowY, uiW, s(36), settings.vsync, ClickAction.TOGGLE_VSYNC);
         rowY += rowH;
 
         drawLabel(labelX, rowY, "FPS LIMIT");
         int fpsIdx = getFpsIndex();
         String fpsStr = settings.fps == 0 ? "UNLIMITED" : String.valueOf(settings.fps);
-        float fpsBtnW = 140;
-        float totalFpsW = fpsBtnW + navW * 2 + 10;
+        float fpsBtnW = s(140);
+        float totalFpsW = fpsBtnW + navW * 2 + s(10);
         float fpsMx = valueRightX - totalFpsW;
-        drawButton(fpsMx, rowY, navW, 36, "<", COL_TEXT, ClickAction.FPS_PREV);
-        drawValueButton(fpsMx + navW + 5, rowY, fpsBtnW, 36, fpsStr, ClickAction.NONE);
-        drawButton(fpsMx + navW + fpsBtnW + 10, rowY, navW, 36, ">", COL_TEXT, ClickAction.FPS_NEXT);
+        drawButton(fpsMx, rowY, navW, s(36), "<", COL_TEXT, ClickAction.FPS_PREV);
+        drawValueButton(fpsMx + navW + s(5), rowY, fpsBtnW, s(36), fpsStr, ClickAction.NONE);
+        drawButton(fpsMx + navW + fpsBtnW + s(10), rowY, navW, s(36), ">", COL_TEXT, ClickAction.FPS_NEXT);
         rowY += rowH;
 
         drawLabel(labelX, rowY, "MOUSE SENSITIVITY");
-        drawSlider(uiX, rowY, uiW, 36, settings.mouseSensitivity, SENS_MIN, SENS_MAX, ClickAction.SLIDER_SENSITIVITY);
+        drawSlider(uiX, rowY, uiW, s(36), settings.mouseSensitivity, SENS_MIN, SENS_MAX, ClickAction.SLIDER_SENSITIVITY);
         rowY += rowH;
 
         drawLabel(labelX, rowY, "MASTER VOLUME");
-        drawSlider(uiX, rowY, uiW, 36, settings.masterVolume, VOL_MIN, VOL_MAX, ClickAction.SLIDER_VOLUME);
+        drawSlider(uiX, rowY, uiW, s(36), settings.masterVolume, VOL_MIN, VOL_MAX, ClickAction.SLIDER_VOLUME);
         rowY += rowH;
 
-
-        drawButton(px + 40, py + panelH - 70, 240, 50, "APPLY",
+        drawButton(px + s(40), py + panelH - s(70), s(240), s(50), "APPLY",
                 COL_ACCENT, ClickAction.APPLY_SETTINGS);
-        // BACK теперь отменяет изменения (DISCARD_CHANGES), а не просто уходит на Main
-        drawButton(px + panelW - 280, py + panelH - 70, 240, 50, "BACK",
+        drawButton(px + panelW - s(280), py + panelH - s(70), s(240), s(50), "BACK",
                 COL_TEXT, ClickAction.DISCARD_CHANGES);
     }
 
     private void renderProfile(int w, int h) {
         drawTitle(w, "PROFILE", h);
 
-        float panelW = 720, panelH = 200;
+        float panelW = s(720), panelH = s(200);
         float px = (w - panelW) / 2.0f;
-        float py = Math.max(80, (h - panelH*1.5f) );
+        float py = Math.max(s(80), (h - panelH * 1.5f));
         drawPanel(px, py, panelW, panelH);
 
-        float labelX = px + 32;
-        float valueX = px + panelW - 32;
-        float rowY   = py + 30;
-        float rowH   = 50;
+        float labelX = px + s(32);
+        float valueX = px + panelW - s(32);
+        float rowY   = py + s(30);
+        float rowH   = s(50);
+        float navW   = s(40);
+        float modelBtnW = s(200);
 
         drawLabel(labelX, rowY, "NICKNAME");
         String nickShow = inputActive && inputField == 0 ? inputText + "|" : settings.playerName;
-        drawInput(valueX - 320, rowY, 320, 40, nickShow, inputActive && inputField == 0, 0);
+        drawInput(valueX - s(320), rowY, s(320), s(40), nickShow, inputActive && inputField == 0, 0);
         rowY += rowH;
 
         drawLabel(labelX, rowY, "CHARACTER MODEL");
-
         String modelName = playerModels.get(settings.playerModel);
-
-        float modelBtnW = 200;
-        float navW = 40;
-        float totalW = modelBtnW + navW * 2 + 10;
-
+        float totalW = modelBtnW + navW * 2 + s(10);
         float mx = valueX - totalW;
-        drawButton(mx, rowY, navW, 36, "<", COL_TEXT, ClickAction.MODEL_PREV);
-        drawValueButton(mx + navW + 5, rowY, modelBtnW, 36, modelName, ClickAction.NONE);
-        drawButton(mx + navW + modelBtnW + 10, rowY, navW, 36, ">", COL_TEXT, ClickAction.MODEL_NEXT);
+        drawButton(mx, rowY, navW, s(36), "<", COL_TEXT, ClickAction.MODEL_PREV);
+        drawValueButton(mx + navW + s(5), rowY, modelBtnW, s(36), modelName, ClickAction.NONE);
+        drawButton(mx + navW + modelBtnW + s(10), rowY, navW, s(36), ">", COL_TEXT, ClickAction.MODEL_NEXT);
 
-        float btnY = py + panelH - 56;
-        drawButton(px + 40, btnY, 240, 44, "SAVE",
+        float btnY = py + panelH - s(56);
+        drawButton(px + s(40), btnY, s(240), s(44), "SAVE",
                 COL_ACCENT, ClickAction.SAVE_PROFILE);
-        // BACK теперь отменяет изменения (DISCARD_CHANGES), а не просто уходит на Main
-        drawButton(px + panelW - 280, btnY, 240, 44, "BACK",
+        drawButton(px + panelW - s(280), btnY, s(240), s(44), "BACK",
                 COL_TEXT, ClickAction.DISCARD_CHANGES);
     }
 
     private void renderServers(int w, int h) {
         drawTitle(w, "SERVER BROWSER", h);
 
-        float panelW = 1000, panelH = 620;
+        float panelW = s(1000), panelH = s(620);
         float px = (w - panelW) / 2.0f;
-        float py = Math.max(80, (h - panelH) / 2.0f + 40);
+        float py = Math.max(s(80), (h - panelH) / 2.0f + s(40));
         drawPanel(px, py, panelW, panelH);
 
-        float labelX = px + 32;
-        float rowY   = py + 30;
-
-        float nameW = 280;
-        float ipW = 380;
+        float labelX = px + s(32);
+        float rowY   = py + s(30);
+        float nameW  = s(280);
+        float ipW    = s(380);
 
         String nameShow = inputActive && inputField == 2 ? inputText + "|" : pendingServerName;
-        drawInput(labelX, rowY, nameW, 40, nameShow, inputActive && inputField == 2, 2);
+        drawInput(labelX, rowY, nameW, s(40), nameShow, inputActive && inputField == 2, 2);
 
-        String ipShow = inputActive && inputField == 1 ? inputText + "|" : (pendingServerIp.isEmpty() ? "e.g. 192.168.1.1:27015" : pendingServerIp);
-        drawInput(labelX + nameW + 20, rowY, ipW, 40, ipShow, inputActive && inputField == 1, 1);
+        String ipShow = inputActive && inputField == 1 ? inputText + "|"
+                : (pendingServerIp.isEmpty() ? "e.g. 192.168.1.1:27015" : pendingServerIp);
+        drawInput(labelX + nameW + s(20), rowY, ipW, s(40), ipShow, inputActive && inputField == 1, 1);
 
-        drawButton(labelX + nameW + 20 + ipW + 20, rowY, 120, 40, "ADD",
+        drawButton(labelX + nameW + s(20) + ipW + s(20), rowY, s(120), s(40), "ADD",
                 COL_SUCCESS, ClickAction.ADD_SERVER);
 
-        float tableY = py + 110;
-        float rowH   = 52;
+        float tableY = py + s(110);
+        float rowH   = s(52);
 
-        drawServerRow(px + 20, tableY, panelW - 40, 44,
-                "NAME", "ADDRESS",  true, false, -1);
+        drawServerRow(px + s(20), tableY, panelW - s(40), s(44),
+                "NAME", "ADDRESS", true, false, -1);
 
-        tableY += 44;
+        tableY += s(44);
 
         for (int i = 0; i < servers.size(); i++) {
-            ServerInfo s = servers.get(i);
+            ServerInfo sInfo = servers.get(i);
             boolean selected = (i == selectedServer);
-            drawServerRow(px + 20, tableY + i * rowH, panelW - 40, rowH, s.name, s.ip,false, selected, i);
+            drawServerRow(px + s(20), tableY + i * rowH, panelW - s(40), rowH,
+                    sInfo.name, sInfo.ip, false, selected, i);
         }
 
-        float btnY = py + panelH - 70;
-
+        float btnY = py + panelH - s(70);
         boolean canConnect = selectedServer >= 0;
-        drawButton(px + 32, btnY, 260, 50,
+        drawButton(px + s(32), btnY, s(260), s(50),
                 canConnect ? "CONNECT" : "SELECT A SERVER",
                 canConnect ? COL_ACCENT : COL_TEXT_DIM,
                 ClickAction.CONNECT_SERVER);
-
-        drawButton(px + 312, btnY, 220, 50, "REMOVE",
+        drawButton(px + s(312), btnY, s(220), s(50), "REMOVE",
                 COL_DANGER, ClickAction.REMOVE_SERVER);
-
-        drawButton(px + panelW - 260, btnY, 220, 50, "BACK",
+        drawButton(px + panelW - s(260), btnY, s(220), s(50), "BACK",
                 COL_TEXT, ClickAction.GO_MAIN);
     }
 
     private void drawServerRow(float x, float y, float w, float h,
                                String a, String b,
                                boolean header, boolean selected, int rowIndex) {
+        float radius = s(6);
+
         if (selected) {
             nvgBeginPath(vg);
-            nvgRoundedRect(vg, x, y, w, h, 6);
+            nvgRoundedRect(vg, x, y, w, h, radius);
             nvgFillColor(vg, rgba(0xFFDC5A40));
             nvgFill(vg);
 
             nvgBeginPath(vg);
-            nvgRoundedRect(vg, x, y, 4, h, 2);
+            nvgRoundedRect(vg, x, y, s(4), h, s(2));
             nvgFillColor(vg, rgba(COL_ACCENT));
             nvgFill(vg);
         } else if (header) {
             nvgBeginPath(vg);
-            nvgRoundedRect(vg, x, y, w, h, 6);
+            nvgRoundedRect(vg, x, y, w, h, radius);
             nvgFillColor(vg, rgba(0xFF252535));
             nvgFill(vg);
         } else {
@@ -662,15 +690,15 @@ public class MainMenu {
         }
 
         nvgFontFace(vg, FONT_NAME);
-        nvgFontSize(vg, header ? 18.0f : 20.0f);
+        nvgFontSize(vg, s(header ? 18.0f : 20.0f));
         nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
 
         NVGColor col = header ? rgba(COL_ACCENT) : rgba(COL_TEXT);
         nvgFillColor(vg, col);
 
         float ty = y + h / 2.0f;
-        nvgText(vg, x + 20,  ty, a);
-        nvgText(vg, x + 260, ty, b);
+        nvgText(vg, x + s(20),  ty, a);
+        nvgText(vg, x + s(260), ty, b);
 
         if (!header) {
             registerHitbox(x, y, w, h, ClickAction.NONE, false, rowIndex);
@@ -683,88 +711,88 @@ public class MainMenu {
 
         String ip = getSelectedServerIp() != null ? getSelectedServerIp() : "unknown";
 
-        nvgFontSize(vg, 52.0f);
+        nvgFontSize(vg, s(52.0f));
         nvgFillColor(vg, rgba(0x000000AA));
-        nvgText(vg, w / 2.0f + 3, h / 2.0f - 30 + 3, "CONNECTING...");
+        nvgText(vg, w / 2.0f + s(3), h / 2.0f - s(30) + s(3), "CONNECTING...");
         nvgFillColor(vg, rgba(COL_ACCENT));
-        nvgText(vg, w / 2.0f, h / 2.0f - 30, "CONNECTING...");
+        nvgText(vg, w / 2.0f, h / 2.0f - s(30), "CONNECTING...");
 
-        nvgFontSize(vg, 24.0f);
+        nvgFontSize(vg, s(24.0f));
         nvgFillColor(vg, rgba(COL_TEXT_DIM));
-        nvgText(vg, w / 2.0f, h / 2.0f + 30, "Server: " + ip);
+        nvgText(vg, w / 2.0f, h / 2.0f + s(30), "Server: " + ip);
 
         int dots = (int) ((System.currentTimeMillis() / 300) % 4);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < dots; i++) sb.append(".");
-        nvgFontSize(vg, 28.0f);
+        nvgFontSize(vg, s(28.0f));
         nvgFillColor(vg, rgba(COL_TEXT));
-        nvgText(vg, w / 2.0f, h / 2.0f + 80, sb.toString());
+        nvgText(vg, w / 2.0f, h / 2.0f + s(80), sb.toString());
 
-        drawButton(w / 2.0f - 130, h / 2.0f + 160, 260, 50,
-                "CANCEL", COL_DANGER, ClickAction.GO_MAIN);
+        drawButton(w / 2.0f - s(130), h / 2.0f + s(160), s(260), s(50), "CANCEL", COL_DANGER, ClickAction.GO_MAIN);
     }
 
     private void drawTitle(int w, String title, int h) {
         nvgFontFace(vg, FONT_NAME);
         nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
-        nvgFontSize(vg, 56.0f);
+        nvgFontSize(vg, s(56.0f));
         nvgFillColor(vg, rgba(0x000000AA));
-        nvgText(vg, w / 2.0f + 2, h * 0.07f + 2, title);
+        nvgText(vg, w / 2.0f + s(2), h * 0.07f + s(2), title);
         nvgFillColor(vg, rgba(COL_ACCENT));
         nvgText(vg, w / 2.0f, h * 0.07f, title);
     }
 
     private void drawPanel(float x, float y, float w, float h) {
+        float r = s(14);
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, x, y, w, h, 14);
+        nvgRoundedRect(vg, x, y, w, h, r);
         nvgFillColor(vg, rgba(COL_PANEL));
         nvgFill(vg);
 
         nvgStrokeColor(vg, rgba(COL_BORDER));
-        nvgStrokeWidth(vg, 2.0f);
+        nvgStrokeWidth(vg, s(2.0f));
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, x, y, w, h, 14);
+        nvgRoundedRect(vg, x, y, w, h, r);
         nvgStroke(vg);
     }
 
     private void drawLabel(float x, float y, String text) {
         nvgFontFace(vg, FONT_NAME);
-        nvgFontSize(vg, 20.0f);
+        nvgFontSize(vg, s(20.0f));
         nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
         nvgFillColor(vg, rgba(COL_TEXT_DIM));
-        nvgText(vg, x, y + 18, text);
+        nvgText(vg, x, y + s(18), text);
     }
 
     private void drawInput(float x, float y, float w, float h, String value, boolean active, int fieldId) {
+        float r = s(6);
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, x, y, w, h, 6);
+        nvgRoundedRect(vg, x, y, w, h, r);
         nvgFillColor(vg, rgba(0xFF101018));
         nvgFill(vg);
 
         nvgStrokeColor(vg, active ? rgba(COL_ACCENT) : rgba(COL_BORDER));
-        nvgStrokeWidth(vg, active ? 2.5f : 1.5f);
+        nvgStrokeWidth(vg, active ? s(2.5f) : s(1.5f));
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, x, y, w, h, 6);
+        nvgRoundedRect(vg, x, y, w, h, r);
         nvgStroke(vg);
 
         nvgFontFace(vg, FONT_NAME);
-        nvgFontSize(vg, 20.0f);
+        nvgFontSize(vg, s(20.0f));
         nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
         nvgFillColor(vg, rgba(COL_TEXT));
-        nvgText(vg, x + 14, y + h / 2.0f, value);
+        nvgText(vg, x + s(14), y + h / 2.0f, value);
 
         registerHitbox(x, y, w, h, ClickAction.NONE, true, fieldId);
     }
 
     private void drawToggle(float x, float y, float w, float h, boolean on, ClickAction action) {
-        float knobW = h - 8;
-        float trackX = x + w - w;
+        float knobW = h - s(8);
         nvgBeginPath(vg);
         nvgRoundedRect(vg, x, y, w, h, h / 2);
         nvgFillColor(vg, on ? rgba(0xFF3A7040) : rgba(0xFF303040));
         nvgFill(vg);
 
-        float kx = on ? (x + w - knobW - 4) : (x + 4);
+        float kx = on ? (x + w - knobW - s(4)) : (x + s(4));
         nvgBeginPath(vg);
         nvgCircle(vg, kx + knobW / 2, y + h / 2, knobW / 2);
         nvgFillColor(vg, on ? rgba(COL_SUCCESS) : rgba(0x808090));
@@ -774,19 +802,20 @@ public class MainMenu {
     }
 
     private void drawValueButton(float x, float y, float w, float h, String value, ClickAction action) {
+        float r = s(6);
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, x, y, w, h, 6);
+        nvgRoundedRect(vg, x, y, w, h, r);
         nvgFillColor(vg, rgba(0xFF101018));
         nvgFill(vg);
 
         nvgStrokeColor(vg, rgba(COL_BORDER));
-        nvgStrokeWidth(vg, 1.5f);
+        nvgStrokeWidth(vg, s(1.5f));
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, x, y, w, h, 6);
+        nvgRoundedRect(vg, x, y, w, h, r);
         nvgStroke(vg);
 
         nvgFontFace(vg, FONT_NAME);
-        nvgFontSize(vg, 18.0f);
+        nvgFontSize(vg, s(18.0f));
         nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
         nvgFillColor(vg, rgba(COL_TEXT));
         nvgText(vg, x + w / 2, y + h / 2, value);
@@ -828,7 +857,6 @@ public class MainMenu {
                     return ClickAction.NONE;
                 }
 
-                // клик по слайдеру — начинаем перетаскивание и сразу ставим значение
                 if (hb.action == ClickAction.SLIDER_SENSITIVITY || hb.action == ClickAction.SLIDER_VOLUME) {
                     draggingSlider = true;
                     dragSliderAction = hb.action;
@@ -867,7 +895,6 @@ public class MainMenu {
         if (!draggingSlider) return;
 
         if (!mouseDown) {
-            // ЛКМ отпущена — завершаем перетаскивание
             draggingSlider = false;
             dragSliderAction = ClickAction.NONE;
             return;
@@ -884,7 +911,6 @@ public class MainMenu {
         for (Hitbox hb : hitboxes) {
             if (hb.action != dragSliderAction) continue;
 
-            // Позиция курсора внутри трека -> нормализованное значение 0..1
             float t = (float) ((mx - hb.x) / hb.w);
             t = Math.max(0f, Math.min(1f, t));
 
@@ -907,9 +933,11 @@ public class MainMenu {
 
     private void drawSlider(float x, float y, float w, float h, float value,
                             float min, float max, ClickAction sliderAction) {
-        float trackY = y + h / 2 - 4;
+        float trackH = s(8);
+        float trackY = y + h / 2 - trackH / 2;
+
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, x, trackY, w, 8, 4);
+        nvgRoundedRect(vg, x, trackY, w, trackH, trackH / 2);
         nvgFillColor(vg, rgba(0xFF303040));
         nvgFill(vg);
 
@@ -917,48 +945,48 @@ public class MainMenu {
         t = Math.max(0f, Math.min(1f, t));
 
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, x, trackY, w * t, 8, 4);
+        nvgRoundedRect(vg, x, trackY, w * t, trackH, trackH / 2);
         nvgFillColor(vg, rgba(COL_ACCENT));
         nvgFill(vg);
 
+        float knobR = s(10);
         nvgBeginPath(vg);
-        nvgCircle(vg, x + w * t, y + h / 2, 10);
+        nvgCircle(vg, x + w * t, y + h / 2, knobR);
         nvgFillColor(vg, rgba(COL_ACCENT));
         nvgFill(vg);
         nvgStrokeColor(vg, rgba(0x000000));
-        nvgStrokeWidth(vg, 2);
+        nvgStrokeWidth(vg, s(2));
         nvgStroke(vg);
 
         nvgFontFace(vg, FONT_NAME);
-        nvgFontSize(vg, 16.0f);
+        nvgFontSize(vg, s(16.0f));
         nvgTextAlign(vg, NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
         nvgFillColor(vg, rgba(COL_TEXT_DIM));
-        nvgText(vg, x - 10, y + h / 2, String.format("%.2f", value));
+        nvgText(vg, x - s(10), y + h / 2, String.format("%.2f", value));
 
-        // слайдер интерактивен — регистрируем хитбокс (с небольшим запасом по вертикали)
         if (sliderAction != ClickAction.NONE) {
-            registerHitbox(x, y - 4, w, h + 8, sliderAction, false, -1);
+            registerHitbox(x, y - s(4), w, h + s(8), sliderAction, false, -1);
         }
     }
-
 
     private void drawButton(float x, float y, float w, float h, String text,
                             int color, ClickAction action) {
         boolean hovered = isHovered(x, y, w, h);
+        float r = s(8);
 
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, x, y, w, h, 8);
+        nvgRoundedRect(vg, x, y, w, h, r);
         nvgFillColor(vg, hovered ? rgba(0xFF2A2A3A) : rgba(0xFF1A1A28));
         nvgFill(vg);
 
         nvgStrokeColor(vg, rgba(color));
-        nvgStrokeWidth(vg, hovered ? 3.0f : 1.8f);
+        nvgStrokeWidth(vg, hovered ? s(3.0f) : s(1.8f));
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, x, y, w, h, 8);
+        nvgRoundedRect(vg, x, y, w, h, r);
         nvgStroke(vg);
 
         nvgFontFace(vg, FONT_NAME);
-        nvgFontSize(vg, 22.0f);
+        nvgFontSize(vg, s(22.0f));
         nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
         nvgFillColor(vg, rgba(color));
         nvgText(vg, x + w / 2.0f, y + h / 2.0f, text);
@@ -990,8 +1018,6 @@ public class MainMenu {
     private boolean isHovered(float x, float y, float w, float h) {
         return mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
     }
-
-
 
     private void addServer() {
         if (!pendingServerIp.isEmpty()) {
@@ -1037,16 +1063,11 @@ public class MainMenu {
         }
         splashBuffer = null;
 
-        if (bgImage != -1 && vg != NULL) {
-            nvgDeleteImage(vg, bgImage);
-            bgImage = -1;
-        }
+
         if (vg != NULL) {
             nvgDelete(vg);
             vg = NULL;
         }
-        // Просто обнуляем ссылки. Сборщик мусора (GC) сам освободит direct ByteBuffer.
         fontBuffer = null;
-        bgBuffer = null;
     }
 }

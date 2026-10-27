@@ -255,7 +255,7 @@ public class Player extends GameObject {
                 true,
                 playerPos,
                 spawnRotation,
-                new Vector3f(1.0f, 1.0f, 1.0f)
+                new Vector3f(1.0f, 1.0f, 1.0f),true
         );
 
         for (GameObject obj : objects) {
@@ -280,7 +280,7 @@ public class Player extends GameObject {
                 true,
                 pos,
                 new Vector3f(0, 0, 0),
-                new Vector3f(1.0f, 1.0f, 1.0f)
+                new Vector3f(1.0f, 1.0f, 1.0f),true
         );
 
 
@@ -367,10 +367,6 @@ public class Player extends GameObject {
 
     public int getHealth() {
         return health;
-    }
-
-    public void setDamage(int dmg) {
-        this.health -= dmg;
     }
 
     public void Destroy(){
@@ -478,7 +474,7 @@ public class Player extends GameObject {
                 soundSource.playRnd(jumps, false);
             }
         }else if (drop) {
-            if(checkOnGroundDist()>15.0f) {
+            if(checkOnGroundDist()>10.0f) {
                 this.rigidBody.setLinearVelocity(new javax.vecmath.Vector3f(currentVel.x, currentVel.y - dropForce, currentVel.z));
             }
         }
@@ -500,7 +496,7 @@ public class Player extends GameObject {
 
     private float checkOnGroundDist() {
         javax.vecmath.Vector3f from = new javax.vecmath.Vector3f(transform.origin.x, transform.origin.y, transform.origin.z);
-        javax.vecmath.Vector3f to = new javax.vecmath.Vector3f(transform.origin.x, transform.origin.y - 30.0f, transform.origin.z);
+        javax.vecmath.Vector3f to = new javax.vecmath.Vector3f(transform.origin.x, transform.origin.y - 200.0f, transform.origin.z);
 
         CollisionWorld.ClosestRayResultCallback callback = new CollisionWorld.ClosestRayResultCallback(from, to);
         callback.collisionFilterGroup = (short) GameObject.RAYCAST_MASK;

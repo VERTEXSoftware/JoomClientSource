@@ -37,6 +37,15 @@ public class GameHud {
     private static final String FONT_NAME = "hud-font";
     private static final String FONT_FILE = "font/def.ttf";
 
+    // ========== Масштабирование UI ==========
+    private static final float BASE_WIDTH  = 1920f;
+    private static final float BASE_HEIGHT = 1080f;
+    private static final float SCALE_MIN   = 0.5f;
+    private static final float SCALE_MAX   = 3.0f;
+
+    private float uiScale = 1.0f;
+    private int   fbWidth = 1920, fbHeight = 1080;
+
     // Прицел
     private int crosshairImage = -1;
     private static final String CROSSHAIR_FILE = "texture/crosshair.png";
@@ -77,14 +86,14 @@ public class GameHud {
     private static final class TextSegment {
         final String text;
         final byte r, g, b;
-        final int a;                 // <-- int, не byte
+        final int a;
 
         TextSegment(String text, int r, int g, int b, int a) {
             this.text = text;
             this.r = (byte) r;
             this.g = (byte) g;
             this.b = (byte) b;
-            this.a = a;              // 0..255
+            this.a = a;
         }
     }
 
@@ -274,7 +283,6 @@ public class GameHud {
             throw new Exception("Не удалось инициализировать NanoVG");
         }
 
-        // --- Шрифт (Ищется в slvl/jar через ResourceManager) ---
         fontBuffer = ResourceManager.getResource(FONT_FILE);
         if (fontBuffer == null) {
             throw new Exception("Файл шрифта не найден в ресурсах: " + FONT_FILE);
@@ -285,14 +293,10 @@ public class GameHud {
             throw new Exception("Не удалось загрузить шрифт в NanoVG: " + FONT_FILE);
         }
 
-        // --- Изображения ---
         crosshairImage = loadImage(CROSSHAIR_FILE);
         bloodImage     = loadImage(BLOOD_FILE);
     }
 
-    /**
-     * Загружает PNG из памяти (через ResourceManager) и возвращает ID изображения NanoVG.
-     */
     private int loadImage(String filePath) throws Exception {
         ByteBuffer buffer = ResourceManager.getResourceOrError(filePath, "error.png");
         if (buffer == null) {
@@ -309,10 +313,27 @@ public class GameHud {
     }
 
     // ------------------------------------------------------------------
+    //  Масштабирование
+    // ------------------------------------------------------------------
+
+    private void updateScale(int w, int h) {
+        fbWidth = w;
+        fbHeight = h;
+        float sx = w / BASE_WIDTH;
+        float sy = h / BASE_HEIGHT;
+        uiScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.min(sx, sy)));
+    }
+
+    /** Масштабирует размер относительно базового разрешения. */
+    private float s(float v) { return v * uiScale; }
+
+    // ------------------------------------------------------------------
     //  Рендер
     // ------------------------------------------------------------------
 
     public void render(int windowWidth, int windowHeight) {
+        updateScale(windowWidth, windowHeight);
+
         float dt = Time.getInstance().getDeltaSecond();
 
         nvgBeginFrame(vg, windowWidth, windowHeight, 1.0f);
@@ -348,16 +369,17 @@ public class GameHud {
                     }
 
                     if (crosshairImage != -1) {
+                        float crossSize = s(CROSSHAIR_SIZE);
                         float cx = windowWidth / 2.0f;
                         float cy = windowHeight / 2.0f;
-                        float half = CROSSHAIR_SIZE / 2.0f;
+                        float half = crossSize / 2.0f;
 
                         NVGPaint paint = NVGPaint.calloc();
-                        nvgImagePattern(vg, cx - half, cy - half, CROSSHAIR_SIZE, CROSSHAIR_SIZE,
+                        nvgImagePattern(vg, cx - half, cy - half, crossSize, crossSize,
                                 0.0f, crosshairImage, 1.0f, paint);
 
                         nvgBeginPath(vg);
-                        nvgRect(vg, cx - half, cy - half, CROSSHAIR_SIZE, CROSSHAIR_SIZE);
+                        nvgRect(vg, cx - half, cy - half, crossSize, crossSize);
                         nvgFillPaint(vg, paint);
                         nvgFill(vg);
 
@@ -365,30 +387,51 @@ public class GameHud {
                     }
 
                     nvgFontFace(vg, FONT_NAME);
-                    nvgFontSize(vg, 50.0f);
+                    nvgFontSize(vg, s(50.0f));
                     nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
 
+// ---------- HP с обводкой ----------
                     NVGColor healthColor = NVGColor.create();
                     if (health > 50) nvgRGBA((byte) 0, (byte) 255, (byte) 0, (byte) 255, healthColor);
                     else if (health > 20) nvgRGBA((byte) 255, (byte) 255, (byte) 0, (byte) 255, healthColor);
                     else nvgRGBA((byte) 255, (byte) 0, (byte) 0, (byte) 255, healthColor);
 
-                    nvgFillColor(vg, healthColor);
-                    nvgText(vg, 20, windowHeight - 50, "HP: " + health);
+                    NVGColor hpShadow = NVGColor.create();
+                    nvgRGBA((byte) 0, (byte) 0, (byte) 0, (byte) 200, hpShadow);
 
+                    String hpText = "HP: " + health;
+                    float hpX = s(20);
+                    float hpY = windowHeight - s(50);
+
+                    nvgFillColor(vg, hpShadow);
+                    nvgText(vg, hpX + s(2), hpY + s(2), hpText);
+
+                    nvgFillColor(vg, healthColor);
+                    nvgText(vg, hpX, hpY, hpText);
+
+// ---------- AMMO с обводкой ----------
                     NVGColor ammoColor = NVGColor.create();
                     if (ammo > 15) nvgRGBA((byte) 255, (byte) 255, (byte) 255, (byte) 255, ammoColor);
                     else if (ammo > 5) nvgRGBA((byte) 255, (byte) 255, (byte) 0, (byte) 255, ammoColor);
                     else nvgRGBA((byte) 255, (byte) 0, (byte) 0, (byte) 255, ammoColor);
 
+                    NVGColor ammoShadow = NVGColor.create();
+                    nvgRGBA((byte) 0, (byte) 0, (byte) 0, (byte) 200, ammoShadow);
+
                     String ammoText = "AMMO: " + ammo;
                     float textWidth = nvgTextBounds(vg, 0, 0, ammoText, (float[]) null);
+                    float ammoX = windowWidth - textWidth - s(20);
+                    float ammoY = windowHeight - s(50);
+
+                    nvgFillColor(vg, ammoShadow);
+                    nvgText(vg, ammoX + s(2), ammoY + s(2), ammoText);
+
                     nvgFillColor(vg, ammoColor);
-                    nvgText(vg, windowWidth - textWidth - 20, windowHeight - 50, ammoText);
+                    nvgText(vg, ammoX, ammoY, ammoText);
 
                     if (Playername != null && !Playername.isEmpty()) {
                         nvgFontFace(vg, FONT_NAME);
-                        nvgFontSize(vg, 50.0f);
+                        nvgFontSize(vg, s(50.0f));
                         nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
 
                         NVGColor nameShadow = NVGColor.create();
@@ -398,10 +441,10 @@ public class GameHud {
                         nvgRGBA((byte) 255, (byte) 255, (byte) 255, (byte) 255, nameColor);
 
                         float cx = windowWidth / 2.0f;
-                        float ty = windowHeight - 50.0f;
+                        float ty = windowHeight - s(50.0f);
 
                         nvgFillColor(vg, nameShadow);
-                        nvgText(vg, cx + 2, ty + 2, Playername);
+                        nvgText(vg, cx + s(2), ty + s(2), Playername);
 
                         nvgFillColor(vg, nameColor);
                         nvgText(vg, cx, ty, Playername);
@@ -422,20 +465,20 @@ public class GameHud {
                     NVGColor deadColor = NVGColor.create();
                     nvgRGBA((byte) 220, (byte) 30, (byte) 30, (byte) 255, deadColor);
 
-                    nvgFontSize(vg, 96.0f);
+                    nvgFontSize(vg, s(96.0f));
                     nvgFillColor(vg, shadow);
-                    nvgText(vg, cx + 3, cy - 40 + 3, "YOU ARE DEAD");
+                    nvgText(vg, cx + s(3), cy - s(40) + s(3), "YOU ARE DEAD");
                     nvgFillColor(vg, deadColor);
-                    nvgText(vg, cx, cy - 40, "YOU ARE DEAD");
+                    nvgText(vg, cx, cy - s(40), "YOU ARE DEAD");
 
-                    nvgFontSize(vg, 42.0f);
+                    nvgFontSize(vg, s(42.0f));
                     NVGColor waitColor = NVGColor.create();
                     nvgRGBA((byte) 255, (byte) 255, (byte) 255, (byte) 230, waitColor);
 
                     nvgFillColor(vg, shadow);
-                    nvgText(vg, cx + 2, cy + 50 + 2, "WAIT TO RESPAWN");
+                    nvgText(vg, cx + s(2), cy + s(50) + s(2), "WAIT TO RESPAWN");
                     nvgFillColor(vg, waitColor);
-                    nvgText(vg, cx, cy + 50, "WAIT TO RESPAWN");
+                    nvgText(vg, cx, cy + s(50), "WAIT TO RESPAWN");
                 }
             } else {
                 if (this.guimod == TypeMode.EndMatch) {
@@ -443,7 +486,7 @@ public class GameHud {
                 }
             }
 
-            if(this.guimod == TypeMode.FPSPlayer || this.guimod == TypeMode.DeadPlayer) {
+            if (this.guimod == TypeMode.FPSPlayer || this.guimod == TypeMode.DeadPlayer) {
                 renderTimer(windowWidth);
             }
 
@@ -469,17 +512,17 @@ public class GameHud {
         NVGColor subColor = NVGColor.create();
         nvgRGBA((byte) 230, (byte) 230, (byte) 230, (byte) 230, subColor);
 
-        nvgFontSize(vg, 42.0f);
+        nvgFontSize(vg, s(42.0f));
         nvgFillColor(vg, shadow);
-        nvgText(vg, cx + 3, cy - 20 + 3, "WAITING FOR PLAYERS");
+        nvgText(vg, cx + s(3), cy - s(20) + s(3), "WAITING FOR PLAYERS");
         nvgFillColor(vg, mainColor);
-        nvgText(vg, cx, cy - 20, "WAITING FOR PLAYERS");
+        nvgText(vg, cx, cy - s(20), "WAITING FOR PLAYERS");
 
-        nvgFontSize(vg, 28.0f);
+        nvgFontSize(vg, s(28.0f));
         nvgFillColor(vg, shadow);
-        nvgText(vg, cx + 2, cy + 70 + 2, "PLEASE WAIT...");
+        nvgText(vg, cx + s(2), cy + s(70) + s(2), "PLEASE WAIT...");
         nvgFillColor(vg, subColor);
-        nvgText(vg, cx, cy + 70, "PLEASE WAIT...");
+        nvgText(vg, cx, cy + s(70), "PLEASE WAIT...");
     }
 
     private void renderLoadScene(int windowWidth, int windowHeight) {
@@ -498,17 +541,17 @@ public class GameHud {
         NVGColor subColor = NVGColor.create();
         nvgRGBA((byte) 230, (byte) 230, (byte) 230, (byte) 230, subColor);
 
-        nvgFontSize(vg, 42.0f);
+        nvgFontSize(vg, s(42.0f));
         nvgFillColor(vg, shadow);
-        nvgText(vg, cx + 3, cy - 20 + 3, "LOAD MAP: "+NameMap);
+        nvgText(vg, cx + s(3), cy - s(20) + s(3), "LOAD MAP: " + NameMap);
         nvgFillColor(vg, mainColor);
-        nvgText(vg, cx, cy - 20, "LOAD MAP: "+NameMap);
+        nvgText(vg, cx, cy - s(20), "LOAD MAP: " + NameMap);
 
-        nvgFontSize(vg, 28.0f);
+        nvgFontSize(vg, s(28.0f));
         nvgFillColor(vg, shadow);
-        nvgText(vg, cx + 2, cy + 70 + 2, "PLEASE WAIT...");
+        nvgText(vg, cx + s(2), cy + s(70) + s(2), "PLEASE WAIT...");
         nvgFillColor(vg, subColor);
-        nvgText(vg, cx, cy + 70, "PLEASE WAIT...");
+        nvgText(vg, cx, cy + s(70), "PLEASE WAIT...");
     }
 
     private void renderTimer(int windowWidth) {
@@ -526,7 +569,7 @@ public class GameHud {
         String timeText = String.format("%02d:%02d", minutes, seconds);
 
         nvgFontFace(vg, FONT_NAME);
-        nvgFontSize(vg, 44.0f);
+        nvgFontSize(vg, s(44.0f));
         nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
 
         NVGColor color = NVGColor.create();
@@ -542,20 +585,20 @@ public class GameHud {
         float cx = windowWidth / 2.0f;
 
         nvgFillColor(vg, shadow);
-        nvgText(vg, cx + 2, 22, timeText);
+        nvgText(vg, cx + s(2), s(22), timeText);
 
         nvgFillColor(vg, color);
-        nvgText(vg, cx, 20, timeText);
+        nvgText(vg, cx, s(20), timeText);
     }
 
     private void renderEvents(int windowWidth, float dt) {
         if (events.isEmpty()) return;
 
-        final float fontSize    = 22.0f;
-        final float padding     = 10.0f;
-        final float lineHeight  = fontSize + 12.0f;
-        final float topMargin   = 80.0f;
-        final float rightMargin = 20.0f;
+        final float fontSize    = s(22.0f);
+        final float padding     = s(10.0f);
+        final float lineHeight  = fontSize + s(12.0f);
+        final float topMargin   = s(80.0f);
+        final float rightMargin = s(20.0f);
 
         nvgFontFace(vg, FONT_NAME);
         nvgFontSize(vg, fontSize);
@@ -578,31 +621,31 @@ public class GameHud {
 
             float lifeRatio = ev.life / ev.maxLife;
             float fade = lifeRatio < 0.25f ? lifeRatio / 0.25f : 1.0f;
-            float slideOffset = (1.0f - ev.slideIn) * 300.0f;
+            float slideOffset = (1.0f - ev.slideIn) * s(300.0f);
 
             // Измеряем ширину без цветовых меток
             float textBounds = 0.0f;
-            for (TextSegment s : ev.segments) {
-                textBounds += nvgTextBounds(vg, 0, 0, s.text, (float[]) null);
+            for (TextSegment seg : ev.segments) {
+                textBounds += nvgTextBounds(vg, 0, 0, seg.text, (float[]) null);
             }
 
             float boxWidth  = textBounds + padding * 2.0f;
             float boxHeight = lineHeight;
 
             float boxX = windowWidth - boxWidth - rightMargin + slideOffset;
-            float boxY = topMargin + index * (boxHeight + 6.0f);
+            float boxY = topMargin + index * (boxHeight + s(6.0f));
 
             NVGColor bg = NVGColor.create();
             nvgRGBA((byte) 0, (byte) 0, (byte) 0, (byte) (140 * fade), bg);
             nvgBeginPath(vg);
-            nvgRoundedRect(vg, boxX, boxY, boxWidth, boxHeight, 6.0f);
+            nvgRoundedRect(vg, boxX, boxY, boxWidth, boxHeight, s(6.0f));
             nvgFillColor(vg, bg);
             nvgFill(vg);
 
             NVGColor accent = NVGColor.create();
             nvgRGBA((byte) 255, (byte) 200, (byte) 60, (byte) (220 * fade), accent);
             nvgBeginPath(vg);
-            nvgRoundedRect(vg, boxX, boxY, 4.0f, boxHeight, 2.0f);
+            nvgRoundedRect(vg, boxX, boxY, s(4.0f), boxHeight, s(2.0f));
             nvgFillColor(vg, accent);
             nvgFill(vg);
 
@@ -610,12 +653,12 @@ public class GameHud {
             float textX = boxX + padding;
             float textY = boxY + boxHeight / 2.0f;
 
-            for (TextSegment s : ev.segments) {
+            for (TextSegment seg : ev.segments) {
                 NVGColor txt = NVGColor.create();
-                nvgRGBA(s.r, s.g, s.b, (byte) (s.a * fade), txt);
+                nvgRGBA(seg.r, seg.g, seg.b, (byte) (seg.a * fade), txt);
                 nvgFillColor(vg, txt);
-                nvgText(vg, textX, textY, s.text);
-                textX += nvgTextBounds(vg, 0, 0, s.text, (float[]) null);
+                nvgText(vg, textX, textY, seg.text);
+                textX += nvgTextBounds(vg, 0, 0, seg.text, (float[]) null);
             }
 
             index++;
@@ -638,48 +681,48 @@ public class GameHud {
         NVGColor shadow = NVGColor.create();
         nvgRGBA((byte) 0, (byte) 0, (byte) 0, (byte) 200, shadow);
 
-        nvgFontSize(vg, 56.0f);
+        nvgFontSize(vg, s(56.0f));
         nvgFillColor(vg, shadow);
-        nvgText(vg, windowWidth / 2.0f + 2, 62, "LEADERBOARD");
+        nvgText(vg, windowWidth / 2.0f + s(2), s(62), "LEADERBOARD");
         nvgFillColor(vg, titleColor);
-        nvgText(vg, windowWidth / 2.0f, 60, "LEADERBOARD");
+        nvgText(vg, windowWidth / 2.0f, s(60), "LEADERBOARD");
 
-        float tableWidth = Math.min(900.0f, windowWidth - 80.0f);
-        float rowHeight  = 42.0f;
-        float headerH    = 46.0f;
+        float tableWidth = Math.min(s(900.0f), windowWidth - s(80.0f));
+        float rowHeight  = s(42.0f);
+        float headerH    = s(46.0f);
 
         List<LeaderEntry> table = getLeaderTable();
 
         float tableX = (windowWidth - tableWidth) / 2.0f;
-        float tableY = 160.0f;
+        float tableY = s(160.0f);
 
         int rows = Math.max(table.size(), 1);
-        float tableHeight = headerH + rowHeight * rows + 16.0f;
+        float tableHeight = headerH + rowHeight * rows + s(16.0f);
 
-        float colRank   = tableX + 30.0f;
-        float colName   = tableX + 110.0f;
-        float colKills  = tableX + tableWidth - 260.0f;
-        float colDeaths = tableX + tableWidth - 170.0f;
-        float colKD     = tableX + tableWidth - 80.0f;
+        float colRank   = tableX + s(30.0f);
+        float colName   = tableX + s(110.0f);
+        float colKills  = tableX + tableWidth - s(260.0f);
+        float colDeaths = tableX + tableWidth - s(170.0f);
+        float colKD     = tableX + tableWidth - s(80.0f);
 
         NVGColor tableBg = NVGColor.create();
         nvgRGBA((byte) 20, (byte) 20, (byte) 25, (byte) 220, tableBg);
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, tableX, tableY, tableWidth, tableHeight, 10.0f);
+        nvgRoundedRect(vg, tableX, tableY, tableWidth, tableHeight, s(10.0f));
         nvgFillColor(vg, tableBg);
         nvgFill(vg);
 
         NVGColor headerBg = NVGColor.create();
         nvgRGBA((byte) 40, (byte) 40, (byte) 50, (byte) 255, headerBg);
         nvgBeginPath(vg);
-        nvgRoundedRect(vg, tableX, tableY, tableWidth, headerH, 10.0f);
+        nvgRoundedRect(vg, tableX, tableY, tableWidth, headerH, s(10.0f));
         nvgFillColor(vg, headerBg);
         nvgFill(vg);
 
         NVGColor headerText = NVGColor.create();
         nvgRGBA((byte) 255, (byte) 220, (byte) 90, (byte) 255, headerText);
 
-        nvgFontSize(vg, 24.0f);
+        nvgFontSize(vg, s(24.0f));
         nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
         nvgFillColor(vg, headerText);
         nvgText(vg, colRank,   tableY + headerH / 2.0f, "#");
@@ -688,7 +731,7 @@ public class GameHud {
         nvgText(vg, colDeaths, tableY + headerH / 2.0f, "DEATHS");
         nvgText(vg, colKD,     tableY + headerH / 2.0f, "K/D");
 
-        nvgFontSize(vg, 22.0f);
+        nvgFontSize(vg, s(22.0f));
 
         for (int i = 0; i < table.size(); i++) {
             LeaderEntry e = table.get(i);
@@ -699,7 +742,7 @@ public class GameHud {
                 NVGColor rowBg = NVGColor.create();
                 nvgRGBA((byte) 255, (byte) 255, (byte) 255, (byte) 12, rowBg);
                 nvgBeginPath(vg);
-                nvgRect(vg, tableX + 4.0f, rowY, tableWidth - 8.0f, rowHeight);
+                nvgRect(vg, tableX + s(4.0f), rowY, tableWidth - s(8.0f), rowHeight);
                 nvgFillColor(vg, rowBg);
                 nvgFill(vg);
             }
@@ -726,12 +769,12 @@ public class GameHud {
             nvgText(vg, windowWidth / 2.0f, tableY + headerH + rowHeight / 2.0f, "NO DATA");
         }
 
-        nvgFontSize(vg, 22.0f);
+        nvgFontSize(vg, s(22.0f));
         nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
         NVGColor hint = NVGColor.create();
         nvgRGBA((byte) 200, (byte) 200, (byte) 200, (byte) 200, hint);
         nvgFillColor(vg, hint);
-        nvgText(vg, windowWidth / 2.0f, windowHeight - 60.0f, "PRESS ESC TO EXIT");
+        nvgText(vg, windowWidth / 2.0f, windowHeight - s(60.0f), "PRESS ESC TO EXIT");
     }
 
     public void dispose() {
@@ -743,7 +786,6 @@ public class GameHud {
             nvgDeleteImage(vg, bloodImage);
             bloodImage = -1;
         }
-        // Очищаем ссылки на буферы, GC сам освободит память.
         imageBuffers.clear();
 
         if (vg != NULL) {

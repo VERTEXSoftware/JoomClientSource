@@ -101,22 +101,22 @@ public class HandGun extends GameObject {
         Shader gunshd = ResourceCache.getShader("shader/vertex.glsl", "shader/fragment.glsl");
 
         weapons.put(TypeGun.HandGuy, new WeaponData(
-                ModelLoader.load("model/hands_knifegun.dae", gunshd,  0.0f, false, new Vector3f(0, 0, 0), new Vector3f(0, 0, 0), new Vector3f(4, 4, 4)),
+                ModelLoader.load("model/hands_knifegun.dae", gunshd,  0.0f, false, new Vector3f(0, 0, 0), new Vector3f(0, 0, 0), new Vector3f(4, 4, 4),true),
                 new String[]{"sound/player/knife01.ogg"}, new Vector3f(0,0,-1), 6, 15, 700.0f, 0, 1.0f, 0.10f
         ));
 
         weapons.put(TypeGun.RevolverGun, new WeaponData(
-                ModelLoader.load("model/hands_magnumgun.dae", gunshd,  0.0f, false, new Vector3f(0, 0, 0), new Vector3f(0, 0, 0), new Vector3f(4, 4, 4)),
+                ModelLoader.load("model/hands_magnumgun.dae", gunshd,  0.0f, false, new Vector3f(0, 0, 0), new Vector3f(0, 0, 0), new Vector3f(4, 4, 4),true),
                 new String[]{"sound/player/revolver01.ogg","sound/player/revolver01.ogg"}, new Vector3f(0,0,1), 400, 20, 400.0f, 12, 3.0f, 0.18f
         ));
 
         weapons.put(TypeGun.ShotGun, new WeaponData(
-                ModelLoader.load("model/hands_shootgun.dae", gunshd,  0.0f, false, new Vector3f(0, 0, 0), new Vector3f(0, 0, 0), new Vector3f(4, 4, 4)),
+                ModelLoader.load("model/hands_shootgun.dae", gunshd,  0.0f, false, new Vector3f(0, 0, 0), new Vector3f(0, 0, 0), new Vector3f(4, 4, 4),true),
                 new String[]{"sound/player/shotgun_fire1.ogg","sound/player/shotgun_fire2.ogg"}, new Vector3f(0,0,1), 300, 15, 300.0f, 16, 3.0f, 0.28f
         ));
 
         weapons.put(TypeGun.AkaGun, new WeaponData(
-                ModelLoader.load("model/hands_akagun.dae", gunshd,  0.0f, false, new Vector3f(0, 0, 0), new Vector3f(0, 0, 0), new Vector3f(4, 4, 4)),
+                ModelLoader.load("model/hands_akagun.dae", gunshd,  0.0f, false, new Vector3f(0, 0, 0), new Vector3f(0, 0, 0), new Vector3f(4, 4, 4),true),
                 new String[]{"sound/player/aka_fire1.ogg","sound/player/aka_fire2.ogg"}, new Vector3f(0,0,1), 400, 5, 800.0f, 60, 1.2f, 0.07f
         ));
 

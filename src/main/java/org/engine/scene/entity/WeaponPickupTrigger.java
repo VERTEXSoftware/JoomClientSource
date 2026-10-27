@@ -62,9 +62,20 @@ public class WeaponPickupTrigger extends Trigger {
                     false,
                     startview,
                     new Vector3f(0, 0, 0),
-                    new Vector3f(2f, 2f, 2f));
+                    new Vector3f(2f, 2f, 2f),true);
 
-            Scene.getInstance().addListGameObject(visualizecrate);
+            List<GameObject> objects = ModelLoader.load(
+                "model/pickupdrop.dae",
+                sceneShader,
+                2.0f,
+                true,
+                posviewbox,
+                new Vector3f(0, 0, 0),
+                new Vector3f(2f, 2f, 2f),true);
+
+        objects.clear();
+
+        Scene.getInstance().addListGameObject(visualizecrate);
 
 
 
@@ -87,7 +98,7 @@ public class WeaponPickupTrigger extends Trigger {
                 true,
                 posviewbox,
                 spawnRotation,
-                new Vector3f(2f, 2f, 2f));
+                new Vector3f(2f, 2f, 2f),true);
 
         for (GameObject obj : objects) {
             obj.setTimerDestoroy(10.0f);
